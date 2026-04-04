@@ -1,0 +1,375 @@
+---
+title: 从源码构建
+---
+
+<Callout title="注意" type="warn">
+  从源码构建将需要在你的本地环境中安装 Node.js 、Redis、PostgreSQL
+  以及相关依赖。此外，你还需要具备一定的命令行操作经验。如果你不熟悉这些操作，建议选择其他更简单的部署方式，如云平台部署或使用一键部署脚本。
+</Callout>
+
+## 步骤
+
+<div className="fd-steps">
+<div className="fd-step">
+
+### 配置本地环境
+
+请确保你的本地环境中已经安装了以下软件：
+
+- Node.js （推荐版本 16 及以上）
+- pnpm 或 npm 或 yarn（更建议使用 pnpm 以获得更好的性能）
+- Git
+
+你可以分别通过以下命令检查它们是否已安装：
+
+```bash
+node -v
+```
+
+<Tabs items={['pnpm', 'npm', 'yarn']}>
+<Tab value="pnpm">
+
+```bash
+pnpm -v
+```
+
+</Tab>
+<Tab value="npm">
+
+```bash
+npm -v
+```
+
+</Tab>
+<Tab value="yarn">
+
+```bash
+yarn -v
+```
+
+</Tab>
+</Tabs>
+
+```bash
+git --version
+```
+
+如果未安装，请访问它们的官方网站进行下载和安装：
+
+- [Node.js 官网](https://nodejs.org/)
+- pnpm: 安装完成 node.js 后，运行 `npm install -g pnpm` 进行安装。（或者，你也可以选择使用 node.js 自带的 npm）
+- [Git 官网](https://git-scm.com/)
+
+</div>
+<div className="fd-step">
+
+### 安装 PostgreSQL
+
+前往 [PostgreSQL 官网](https://www.postgresql.org/download/) 下载并安装适合你操作系统的 PostgreSQL 版本。安装完成后，请确保 PostgreSQL 服务正在运行。
+你可以使用以下命令检查 PostgreSQL 是否已正确安装：
+
+```bash
+psql -V
+```
+
+安装成功后，你需要创建一个数据库和一个用户供 NeutralPress 使用。你可以使用以下命令：
+
+首先，登录到 PostgreSQL：
+
+<Tabs items={['Linux','macOS', 'Windows']}>
+<Tab value="Linux">
+
+```bash
+sudo -u postgres psql
+```
+
+</Tab>
+<Tab value="macOS">
+
+```bash
+psql
+```
+
+</Tab>
+<Tab value="Windows">
+
+```bash
+psql
+```
+
+</Tab>
+</Tabs>
+
+然后，创建数据库和用户：
+
+```sql
+-- 1. 创建用户并设置密码
+CREATE USER neutralpress WITH PASSWORD 'neutralpress';
+
+-- 2. 授予创建数据库的权限
+ALTER USER neutralpress CREATEDB;
+
+-- 3. 创建数据库，并指定拥有者
+CREATE DATABASE neutralpress OWNER neutralpress;
+
+-- 4. 切换到新创建的数据库（仅能在 psql 命令行中执行，其他执行方式需要手动切换）
+\c neutralpress
+
+-- 5. 将 public 模式(Schema)的所有权移交给该用户
+ALTER SCHEMA public OWNER TO neutralpress;
+```
+
+如果均按照上面的操作，则数据库名称为 `neutralpress`，用户名为 `neutralpress`，密码为 `neutralpress`。你可以根据需要修改这些值，但请确保在后续配置中使用相应的值。
+
+通过以上方法，你得到的连接字符串如下：
+
+```txt
+postgresql://neutralpress:neutralpress@localhost:5432/neutralpress
+```
+
+<ConfigForm label="DATABASE_URL" />
+
+</div>
+<div className="fd-step">
+
+### 安装 Redis
+
+安装 Redis 是必须步骤之一，NeutralPress 依赖一个可访问的 Redis 实例来做运行时缓存、验证码和速率限制等功能。下面列出几种常见的安装与运行方式（**开发环境优先**）：
+
+<Tabs items={["Docker","macOS","Linux","Windows"]}>
+<Tab value="Docker">
+
+```bash
+# 通过官方镜像启动（开发用，映射本地 6379 端口）
+docker run -d --name neutralpress-redis -p 6379:6379 redis:7-alpine
+
+# 如果需要为 Redis 设置密码（示例 password）：
+docker run -d --name neutralpress-redis -p 6379:6379 \
+  redis:7-alpine redis-server --requirepass "yourpassword"
+```
+
+</Tab>
+<Tab value="macOS">
+
+```bash
+# 使用 Homebrew 安装并启动
+brew install redis
+brew services start redis
+
+# 测试连接
+redis-cli ping
+# 应返回 PONG
+```
+
+</Tab>
+<Tab value="Linux">
+
+```bash
+# Debian/Ubuntu
+sudo apt update
+sudo apt install -y redis-server
+sudo systemctl enable --now redis-server
+
+# 测试连接
+redis-cli ping
+# 若返回 PONG 则正常
+```
+
+</Tab>
+<Tab value="Windows">
+
+```bash
+# 推荐使用 Docker 或 WSL2 在 Windows 上运行 Redis。
+# 或者，使用这个项目来更方便的使用 Redis：
+
+git clone https://github.com/redis-windows/redis-windows
+cd redis-windows
+
+# 直接打开 start.cmd 即可启动 Redis 服务器
+```
+
+</Tab>
+</Tabs>
+
+通过以上方法，你得到的连接字符串如下：
+
+```txt
+redis://localhost:6379
+```
+
+<ConfigForm label="REDIS_URL" />
+
+</div>
+<div className="fd-step">
+
+### 克隆项目代码
+
+使用 Git 克隆 NeutralPress 的源码仓库到本地：
+
+```bash
+git clone https://github.com/RavelloH/NeutralPress.git
+cd NeutralPress
+```
+
+</div>
+<div className="fd-step">
+
+### 安装依赖
+
+<Callout>
+  在执行下列命令前，请确保你已经进入到 `NeutralPress` 项目的根目录。
+</Callout>
+
+在项目根目录下运行以下命令以安装所需的依赖。鉴于 NeutralPress 是 monorepo 项目，你可以仅安装 `apps/web` 的依赖。
+
+<Tabs items={['pnpm', 'npm', 'yarn']}>
+<Tab value="pnpm">
+
+```bash
+cd apps/web
+pnpm install
+```
+
+</Tab>
+<Tab value="npm">
+
+```bash
+cd apps/web
+npm install
+```
+
+</Tab>
+<Tab value="yarn">
+
+```bash
+cd apps/web
+yarn install
+```
+
+</Tab>
+</Tabs>
+
+</div>
+<div className="fd-step">
+
+### 配置环境变量
+
+<Callout>
+  在执行下列命令前，请确保你已经进入到 `NeutralPress/apps/web` 文件夹下。
+</Callout>
+<Files>
+  <Folder name="apps" defaultOpen>
+    <Folder name="web" defaultOpen />
+  </Folder>
+</Files>
+
+填写下面的表单以生成 `.env.local` 文件所需的环境变量。你在上面的步骤中，应该已经填写了 PostgreSQL 和 Redis 的连接字符串。其余字段不填则自动生成。
+
+<ConfigForm />
+
+然后，在 `apps/web` 目录下创建 `.env.local` 文件，并将生成的环境变量内容复制进去。
+
+</div>
+<div className="fd-step">
+
+### 构建项目
+
+<Callout>
+  在执行下列命令前，请确保你已经进入到 `NeutralPress/apps/web` 文件夹下。
+</Callout>
+
+<Tabs items={['pnpm', 'npm', 'yarn']}>
+<Tab value="pnpm">
+
+```bash
+pnpm build
+```
+
+</Tab>
+<Tab value="npm">
+
+```bash
+npm run build
+```
+
+</Tab>
+<Tab value="yarn">
+
+```bash
+yarn build
+```
+
+</Tab>
+</Tabs>
+
+正常情况下，构建过程会花费几分钟时间，具体取决于你的计算机性能。
+
+如果构建失败了，请查看 [常见问题](/docs/faq) 以获取帮助。
+
+</div>
+<div className="fd-step">
+
+### 启动项目
+
+如果构建成功，你将看到终端中出现下面的提示：
+
+```ansi
+[2026-01-30 18:29:37.832][[36mINFO[39m]
+[2026-01-30 18:29:37.836][[36mINFO[39m] [32mNeutralPress[39m Post-Build Process...
+[2026-01-30 18:29:37.836][[36mINFO[39m]
+[2026-01-30 18:29:37.837][[36mINFO[39m] Processing build artifacts...
+[2026-01-30 18:29:37.837][[36mINFO[39m] ✓ Detected [[36mStandalone[39m] build mode
+[2026-01-30 18:29:37.837][[36mINFO[39m] > Integrating static assets into standalone package...
+[2026-01-30 18:29:38.297][[32mSUCC[39m] [32m✓ Assets copied successfully[39m
+[2026-01-30 18:29:39.050][[36mINFO[39m]
+[2026-01-30 18:29:39.050][[32mSUCC[39m] [32mBuild Summary:[39m
+[2026-01-30 18:29:39.051][[36mINFO[39m] ----------------------------------------
+[2026-01-30 18:29:39.051][[36mINFO[39m] Pre-build time : 5.42s
+[2026-01-30 18:29:39.051][[36mINFO[39m] Core build time: 156.99s
+[2026-01-30 18:29:39.051][[36mINFO[39m] Total time     : 162.41s
+[2026-01-30 18:29:39.051][[36mINFO[39m] [34mStandard[39m Size  : 148.18 MB
+[2026-01-30 18:29:39.052][[36mINFO[39m] [36mStandalone[39m Size: 225.03 MB
+[2026-01-30 18:29:39.052][[36mINFO[39m] ----------------------------------------
+[2026-01-30 18:29:39.052][[36mINFO[39m]
+[2026-01-30 18:29:39.052][[32mSUCC[39m] [32m[32mNeutralPress[32m is ready for production![39m
+[2026-01-30 18:29:39.052][[36mINFO[39m] Run standalone server (Self-contained):
+[2026-01-30 18:29:39.052][[36mINFO[39m]   [33mnode .next/standalone/apps/web/server.js[39m
+[2026-01-30 18:29:39.053][[36mINFO[39m] OR run standard server:
+[2026-01-30 18:29:39.053][[36mINFO[39m]   [33mpnpm start[39m
+[2026-01-30 18:29:39.053][[36mINFO[39m]
+```
+
+然后，运行下面的命令以启动 NeutralPress：
+
+<Tabs items={['pnpm', 'npm', 'yarn']}>
+<Tab value="pnpm">
+
+```bash
+pnpm start
+```
+
+</Tab>
+<Tab value="npm">
+
+```bash
+npm start
+```
+
+</Tab>
+<Tab value="yarn">
+
+```bash
+yarn start
+```
+
+</Tab>
+</Tabs>
+
+如果你想使用独立服务器模式运行 NeutralPress，可以运行下面的命令：
+
+```bash
+node .next/standalone/apps/web/server.js
+```
+
+</div>
+</div>

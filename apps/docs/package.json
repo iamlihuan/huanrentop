@@ -1,0 +1,45 @@
+{
+  "name": "docs",
+  "version": "5.0.1",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "cf:build": "next build",
+    "cf:preview": "pnpm run cf:build && wrangler dev",
+    "cf:deploy": "pnpm run cf:build && wrangler deploy",
+    "dev": "next dev --port 3001",
+    "start": "next start --port 3001",
+    "types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
+    "postinstall": "fumadocs-mdx",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@gsap/react": "^2.1.2",
+    "@orama/orama": "^3.1.18",
+    "@orama/tokenizers": "^3.1.18",
+    "framer-motion": "12.23.12",
+    "fumadocs-core": "16.4.10",
+    "fumadocs-mdx": "14.2.6",
+    "fumadocs-ui": "16.4.10",
+    "gsap": "^3.13.0",
+    "lenis": "^1.3.17",
+    "lucide-react": "^0.563.0",
+    "next": "^16.1.6",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "tailwind-merge": "^3.4.0"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@tailwindcss/postcss": "^4.1.18",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^25.0.10",
+    "@types/react": "^19.2.9",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.2",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.65.0"
+  }
+}

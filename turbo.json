@@ -1,0 +1,129 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "globalEnv": [
+    "NODE_ENV",
+    "DATABASE_URL",
+    "DIRECT_URL",
+    "PG_POOL_MAX",
+    "PG_CONNECTION_TIMEOUT_MS",
+    "PG_IDLE_TIMEOUT_MS",
+    "PG_MAX_LIFETIME",
+    "REDIS_URL",
+    "JWT_PRIVATE_KEY",
+    "JWT_PUBLIC_KEY",
+    "MASTER_SECRET",
+    "CACHE_BOOTSTRAP_URL",
+    "CACHE_BOOTSTRAP_RETRIES",
+    "CACHE_BOOTSTRAP_INTERVAL_MS",
+    "BUILD_STANDALONE",
+    "BUILD_PROFILE",
+    "PRISMA_CLI_PATH"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**", "build/**"],
+      "env": [
+        "NODE_ENV",
+        "NEXT_PHASE",
+        "DATABASE_URL",
+        "DIRECT_URL",
+        "REDIS_URL",
+        "JWT_PRIVATE_KEY",
+        "JWT_PUBLIC_KEY",
+        "MASTER_SECRET",
+        "CACHE_BOOTSTRAP_URL",
+        "CACHE_BOOTSTRAP_RETRIES",
+        "CACHE_BOOTSTRAP_INTERVAL_MS",
+        "BUILD_STANDALONE",
+        "BUILD_PROFILE",
+        "PRISMA_CLI_PATH"
+      ]
+    },
+    "lint": {
+      "outputs": [],
+      "env": [
+        "NODE_ENV",
+        "JWT_PRIVATE_KEY",
+        "JWT_PUBLIC_KEY",
+        "MASTER_SECRET",
+        "CACHE_BOOTSTRAP_URL",
+        "CACHE_BOOTSTRAP_RETRIES",
+        "CACHE_BOOTSTRAP_INTERVAL_MS",
+        "BUILD_PROFILE"
+      ]
+    },
+    "format": {
+      "inputs": ["$TURBO_DEFAULT$", ".prettierrc", ".prettierignore"],
+      "outputs": []
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"],
+      "env": [
+        "NODE_ENV",
+        "JWT_PRIVATE_KEY",
+        "JWT_PUBLIC_KEY",
+        "MASTER_SECRET",
+        "CACHE_BOOTSTRAP_URL",
+        "CACHE_BOOTSTRAP_RETRIES",
+        "CACHE_BOOTSTRAP_INTERVAL_MS",
+        "BUILD_PROFILE"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "env": [
+        "NODE_ENV",
+        "DATABASE_URL",
+        "DIRECT_URL",
+        "REDIS_URL",
+        "JWT_PRIVATE_KEY",
+        "JWT_PUBLIC_KEY",
+        "MASTER_SECRET",
+        "CACHE_BOOTSTRAP_URL",
+        "CACHE_BOOTSTRAP_RETRIES",
+        "CACHE_BOOTSTRAP_INTERVAL_MS",
+        "BUILD_STANDALONE",
+        "BUILD_PROFILE",
+        "PRISMA_CLI_PATH"
+      ]
+    },
+    "@repo/openapi-generator#dev": {
+      "cache": false,
+      "persistent": true,
+      "env": ["NODE_ENV"],
+      "outputLogs": "full"
+    },
+    "docs#dev": {
+      "cache": false,
+      "persistent": true,
+      "env": ["NODE_ENV"]
+    },
+    "watch-openapi": {
+      "cache": false,
+      "persistent": true,
+      "inputs": [
+        "packages/openapi-generator/openapi.json",
+        "packages/openapi-generator/openapi.yaml"
+      ],
+      "env": ["NODE_ENV"]
+    },
+    "generate-openapi": {
+      "inputs": [
+        "packages/shared-types/src/**/*.ts",
+        "packages/openapi-generator/src/**/*.ts",
+        "apps/web/src/app/api/**/*.ts"
+      ],
+      "env": ["NODE_ENV"]
+    },
+    "docs#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": [".next/**", "!.next/cache/**", "out/**"],
+      "env": ["NODE_ENV"]
+    }
+  }
+}

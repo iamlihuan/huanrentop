@@ -1,0 +1,656 @@
+"use client";
+
+import React, { memo } from "react";
+import { motion } from "framer-motion";
+
+import { AutoTransition } from "@/ui/AutoTransition";
+
+export interface TableColumn<T> {
+  key: string;
+  title: string;
+  dataIndex?: keyof T;
+  render?: (value: unknown, record: T, index: number) => React.ReactNode;
+  /** 自定义表头渲染函数，如果提供则覆盖 title */
+  headerRender?: () => React.ReactNode;
+  align?: "left" | "center" | "right";
+  sortable?: boolean;
+  fixed?: "left" | "right";
+  /** 列宽度 */
+  width?: string | number;
+  /**
+   * 是否使用等宽字体（应用于 th 和 td）
+   * @default false
+   */
+  mono?: boolean;
+  /**
+   * 移动端卡片视图配置，仅由上层组件使用
+   */
+  mobile?: {
+    /**
+     * 控制该列在移动端卡片中的语义位置
+     * title: 卡片主标题
+     * subtitle: 卡片副标题
+     * meta: 卡片信息网格项
+     * hidden: 在移动端卡片中隐藏
+     */
+    role?: "title" | "subtitle" | "meta" | "hidden";
+    /**
+     * 卡片中显示的标签，默认回退到 title
+     */
+    label?: string;
+    /**
+     * 卡片信息项排序，数字越小越靠前
+     */
+    order?: number;
+    /**
+     * 卡片信息项占据的列宽
+     */
+    span?: 1 | 2;
+  };
+}
+
+// 自定义行组件的 Props
+export interface RowComponentProps {
+  record: Record<string, unknown>;
+  index: number;
+  cells: React.ReactNode;
+  className: string;
+  onClick?: (e: React.MouseEvent) => void;
+  rowKey: string | number;
+}
+
+export interface TableProps<T = Record<string, unknown>> {
+  columns: TableColumn<T>[];
+  data: T[];
+  className?: string;
+  /**
+   * 是否显示斑马纹
+   * @default false
+   */
+  striped?: boolean;
+  /**
+   * 是否启用 hover 高亮
+   * @default true
+   */
+  hoverable?: boolean;
+  /**
+   * 是否显示边框
+   * @default false
+   */
+  bordered?: boolean;
+  /**
+   * 表格大小
+   * @default "md"
+   */
+  size?: "sm" | "md" | "lg";
+  /**
+   * 是否显示表头
+   * @default true
+   */
+  showHeader?: boolean;
+  /**
+   * 空数据时显示的内容
+   */
+  emptyText?: React.ReactNode;
+  /**
+   * 行的唯一键
+   */
+  rowKey?: keyof T | ((record: T) => string | number);
+  /**
+   * 行点击事件
+   */
+  onRowClick?: (record: T, index: number, event: React.MouseEvent) => void;
+  /**
+   * 自定义行类名
+   */
+  rowClassName?: string | ((record: T, index: number) => string);
+  /**
+   * 是否启用行动画
+   * @default true
+   */
+  animateRows?: boolean;
+  /**
+   * 是否固定表头
+   * @default false
+   */
+  stickyHeader?: boolean;
+  /**
+   * 表格最大高度（固定表头时使用）
+   */
+  maxHeight?: string | number;
+  /**
+   * 排序变化回调
+   */
+  onSortChange?: (key: string, order: "asc" | "desc" | null) => void;
+  /**
+   * 表格左右内边距（只在表格最左侧和最右侧添加，不影响背景显示）
+   * padding 区域的背景正常显示（例如斑马纹），只是文字不在该区域显示
+   * @default 0
+   */
+  padding?: number;
+  /**
+   * 自定义行渲染组件，替代默认的 MemoTableRow
+   * 用于注入拖拽等自定义行为
+   */
+  rowComponent?: React.ComponentType<RowComponentProps>;
+}
+
+interface SortState {
+  key: string | null;
+  order: "asc" | "desc" | null;
+}
+
+// Memo 化的表格行组件 - 使用非泛型类型避免类型复杂度
+interface MemoTableRowProps {
+  record: Record<string, unknown>;
+  index: number;
+  columns: TableColumn<Record<string, unknown>>[];
+  striped: boolean;
+  hoverable: boolean;
+  onRowClick?: (
+    record: Record<string, unknown>,
+    index: number,
+    event: React.MouseEvent,
+  ) => void;
+  rowClassName: string;
+  animateRows: boolean;
+  getPaddingStyles: () => string;
+  getAlignClass: (align?: "left" | "center" | "right") => string;
+  renderCellContent: (
+    column: TableColumn<Record<string, unknown>>,
+    record: Record<string, unknown>,
+    index: number,
+  ) => React.ReactNode;
+  padding: number;
+  getRowKey: (
+    record: Record<string, unknown>,
+    index: number,
+  ) => string | number;
+}
+
+const MemoTableRow = memo(
+  ({
+    record,
+    index,
+    columns,
+    striped,
+    hoverable,
+    onRowClick,
+    rowClassName,
+    animateRows,
+    getPaddingStyles,
+    getAlignClass,
+    renderCellContent,
+    padding,
+    getRowKey,
+  }: MemoTableRowProps) => {
+    const RowWrapper = animateRows ? motion.tr : "tr";
+    const animationProps = animateRows
+      ? {
+          initial: { opacity: 0, y: -10 },
+          animate: { opacity: 1, y: 0 },
+          transition: {
+            duration: 0.1,
+            delay: Math.min(index * 0.01, 0.5),
+          },
+        }
+      : {};
+
+    // 处理行点击事件，排除特定元素
+    const handleRowClick = (e: React.MouseEvent) => {
+      if (!onRowClick) return;
+
+      // 检查点击目标，避免在点击链接、按钮或交互元素时触发
+      const target = e.target as HTMLElement;
+      const isClickable =
+        target.tagName === "A" ||
+        target.tagName === "BUTTON" ||
+        target.tagName === "INPUT" ||
+        target.tagName === "SELECT" ||
+        target.tagName === "TEXTAREA" ||
+        target.closest("a") ||
+        target.closest("button") ||
+        target.closest("input") ||
+        target.closest("select") ||
+        target.closest("textarea") ||
+        target.closest('[role="button"]') ||
+        target.closest('[data-action-cell="true"]'); // 排除操作列和复选框列
+
+      if (!isClickable) {
+        onRowClick(record, index, e);
+      }
+    };
+
+    return (
+      <RowWrapper
+        key={getRowKey(record, index)}
+        className={`
+        ${striped && index % 2 === 1 ? "bg-muted/25" : ""}
+        ${hoverable ? "hover:bg-muted transition-colors duration-200 ease-out" : ""}
+        ${onRowClick ? "cursor-pointer" : ""}
+        ${rowClassName}
+      `}
+        onClick={handleRowClick}
+        {...(animationProps as Record<string, unknown>)}
+      >
+        {columns.map((column, columnIndex) => (
+          <td
+            key={column.key}
+            className={`
+            ${getPaddingStyles()}
+            ${getAlignClass(column.align)}
+            ${column.mono ? "font-mono" : ""}
+            ${!striped ? "border-t border-border" : ""}
+          `}
+            style={column.width ? { width: column.width } : undefined}
+          >
+            <div
+              {...(padding > 0 && {
+                style: {
+                  ...(columnIndex === 0 && {
+                    paddingLeft: `${padding}em`,
+                  }),
+                  ...(columnIndex === columns.length - 1 && {
+                    paddingRight: `${padding}em`,
+                  }),
+                },
+              })}
+            >
+              {renderCellContent(column, record, index) as React.ReactNode}
+            </div>
+          </td>
+        ))}
+      </RowWrapper>
+    );
+  },
+);
+
+MemoTableRow.displayName = "MemoTableRow";
+
+const getAlignClass = (align?: "left" | "center" | "right") => {
+  switch (align) {
+    case "center":
+      return "text-center";
+    case "right":
+      return "text-right";
+    default:
+      return "text-left";
+  }
+};
+
+const SortIcon = ({
+  columnKey,
+  sortState,
+}: {
+  columnKey: string;
+  sortState: SortState;
+}) => {
+  const isActive = sortState.key === columnKey;
+  const order = isActive ? sortState.order : null;
+
+  return (
+    <span className="inline-flex flex-col ml-1 opacity-50 hover:opacity-100 transition-opacity">
+      <svg
+        className={`w-3 h-3 -mb-1 ${order === "asc" ? "text-primary" : ""}`}
+        fill="currentColor"
+        viewBox="0 0 20 20"
+      >
+        <path d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" />
+      </svg>
+      <svg
+        className={`w-3 h-3 -mt-1 ${order === "desc" ? "text-primary" : ""}`}
+        fill="currentColor"
+        viewBox="0 0 20 20"
+      >
+        <path d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" />
+      </svg>
+    </span>
+  );
+};
+
+export function Table<T extends Record<string, unknown>>({
+  columns = [],
+  data = [],
+  className = "",
+  striped = false,
+  hoverable = true,
+  bordered = false,
+  size = "md",
+  showHeader = true,
+  emptyText = "暂无数据",
+  rowKey,
+  onRowClick,
+  rowClassName,
+  animateRows = true,
+  stickyHeader = false,
+  maxHeight,
+  onSortChange,
+  padding = 0,
+  rowComponent: RowComponent,
+}: TableProps<T>) {
+  const [sortState, setSortState] = React.useState<SortState>({
+    key: null,
+    order: null,
+  });
+
+  const getSizeStyles = React.useCallback(() => {
+    switch (size) {
+      case "sm":
+        return "text-sm";
+      case "md":
+        return "text-base";
+      case "lg":
+        return "text-lg";
+      default:
+        return "text-base";
+    }
+  }, [size]);
+
+  const getPaddingStyles = React.useCallback(() => {
+    switch (size) {
+      case "sm":
+        return "px-2 py-2";
+      case "md":
+        return "px-4 py-3";
+      case "lg":
+        return "px-6 py-4";
+      default:
+        return "px-4 py-3";
+    }
+  }, [size]);
+
+  const getRowKey = React.useCallback(
+    (record: T, index: number): string | number => {
+      if (!rowKey) return index;
+      if (typeof rowKey === "function") return rowKey(record);
+      const value = record[rowKey];
+      return String(value);
+    },
+    [rowKey],
+  );
+
+  const getRowClassName = React.useCallback(
+    (record: T, index: number): string => {
+      if (typeof rowClassName === "function")
+        return rowClassName(record, index);
+      return rowClassName || "";
+    },
+    [rowClassName],
+  );
+
+  const handleSort = (columnKey: string) => {
+    let newOrder: "asc" | "desc" | null = "asc";
+
+    if (sortState.key === columnKey) {
+      if (sortState.order === "asc") {
+        newOrder = "desc";
+      } else if (sortState.order === "desc") {
+        newOrder = null;
+      }
+    }
+
+    setSortState({
+      key: newOrder ? columnKey : null,
+      order: newOrder,
+    });
+
+    onSortChange?.(columnKey, newOrder);
+  };
+
+  const renderCellContent = React.useCallback(
+    (column: TableColumn<T>, record: T, index: number): React.ReactNode => {
+      if (column.render) {
+        return column.render(
+          column.dataIndex ? record[column.dataIndex] : record,
+          record,
+          index,
+        );
+      }
+      const value = column.dataIndex ? record[column.dataIndex] : "";
+      // 将值转换为可渲染的类型
+      if (value === null || value === undefined) return "";
+      if (typeof value === "object") return JSON.stringify(value);
+      return String(value);
+    },
+    [],
+  );
+
+  const tableContainerClasses = `
+    ${stickyHeader || maxHeight ? "overflow-auto" : "overflow-x-auto"}
+    ${className}
+  `;
+
+  const tableClasses = `
+    w-full
+    ${getSizeStyles()}
+    ${bordered ? "border border-border" : ""}
+  `;
+
+  const containerStyle: React.CSSProperties = {};
+  if (maxHeight) {
+    containerStyle.maxHeight =
+      typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight;
+  }
+
+  const hasContainerStyle = maxHeight !== undefined;
+
+  return (
+    <div
+      className={tableContainerClasses}
+      {...(hasContainerStyle && { style: containerStyle })}
+    >
+      <table className={tableClasses}>
+        {showHeader && (
+          <thead
+            className={`
+              ${stickyHeader ? "sticky top-0 z-10 shadow-sm backdrop-blur-sm after:content-[''] after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[1px] after:bg-muted" : ""}
+            `}
+          >
+            <tr className={stickyHeader ? "bg-background relative" : ""}>
+              {columns.map((column, columnIndex) => (
+                <th
+                  key={column.key}
+                  className={`
+                    ${getPaddingStyles()}
+                    font-semibold
+                    text-muted-foreground
+                    bg-background
+                    ${!stickyHeader ? "border-b-2 border-muted" : ""}
+                    ${bordered ? "border-r border-border last:border-r-0" : ""}
+                    ${column.sortable ? "cursor-pointer select-none hover:bg-muted/80 transition-colors" : ""}
+                  `}
+                  style={column.width ? { width: column.width } : undefined}
+                  onClick={() => column.sortable && handleSort(column.key)}
+                >
+                  <div
+                    className={`flex items-center gap-1 ${
+                      column.align === "center"
+                        ? "justify-center"
+                        : column.align === "right"
+                          ? "justify-end"
+                          : "justify-start"
+                    }`}
+                    {...(padding > 0 && {
+                      style: {
+                        ...(columnIndex === 0 && {
+                          paddingLeft: `${padding}em`,
+                        }),
+                        ...(columnIndex === columns.length - 1 && {
+                          paddingRight: `${padding}em`,
+                        }),
+                      },
+                    })}
+                  >
+                    <span>
+                      {column.headerRender
+                        ? column.headerRender()
+                        : column.title}
+                    </span>
+                    {column.sortable && (
+                      <SortIcon columnKey={column.key} sortState={sortState} />
+                    )}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {data.length === 0 ? (
+            <tr>
+              <td
+                colSpan={columns.length}
+                className={`${getPaddingStyles()} text-center text-muted-foreground`}
+              >
+                <div
+                  {...(padding > 0 && {
+                    style: {
+                      paddingLeft: `${padding}em`,
+                      paddingRight: `${padding}em`,
+                    },
+                  })}
+                >
+                  <AutoTransition type="fade">
+                    <div className="py-8">{emptyText}</div>
+                  </AutoTransition>
+                </div>
+              </td>
+            </tr>
+          ) : (
+            data.map((record, index) => {
+              const rowKey = getRowKey(record, index);
+              const rowClassNameStr = getRowClassName(record, index);
+              const baseClassName = `
+                ${striped && index % 2 === 1 ? "bg-muted/25" : ""}
+                ${hoverable ? "hover:bg-muted transition-colors duration-200 ease-out" : ""}
+                ${onRowClick ? "cursor-pointer" : ""}
+                ${rowClassNameStr}
+              `;
+
+              // 处理行点击事件，排除特定元素
+              const handleRowClick = onRowClick
+                ? (e: React.MouseEvent) => {
+                    const target = e.target as HTMLElement;
+                    const isClickable =
+                      target.tagName === "A" ||
+                      target.tagName === "BUTTON" ||
+                      target.tagName === "INPUT" ||
+                      target.tagName === "SELECT" ||
+                      target.tagName === "TEXTAREA" ||
+                      target.closest("a") ||
+                      target.closest("button") ||
+                      target.closest("input") ||
+                      target.closest("select") ||
+                      target.closest("textarea") ||
+                      target.closest('[role="button"]') ||
+                      target.closest('[data-action-cell="true"]');
+                    if (!isClickable) {
+                      onRowClick(record, index, e);
+                    }
+                  }
+                : undefined;
+
+              // 渲染单元格
+              const cells = columns.map((column, columnIndex) => (
+                <td
+                  key={column.key}
+                  className={`
+                    ${getPaddingStyles()}
+                    ${getAlignClass(column.align)}
+                    ${column.mono ? "font-mono" : ""}
+                    ${!striped ? "border-t border-border" : ""}
+                  `}
+                  style={column.width ? { width: column.width } : undefined}
+                >
+                  <div
+                    {...(padding > 0 && {
+                      style: {
+                        ...(columnIndex === 0 && {
+                          paddingLeft: `${padding}em`,
+                        }),
+                        ...(columnIndex === columns.length - 1 && {
+                          paddingRight: `${padding}em`,
+                        }),
+                      },
+                    })}
+                  >
+                    {
+                      renderCellContent(
+                        column,
+                        record,
+                        index,
+                      ) as React.ReactNode
+                    }
+                  </div>
+                </td>
+              ));
+
+              // 如果提供了自定义 RowComponent，使用它
+              if (RowComponent) {
+                return (
+                  <RowComponent
+                    key={rowKey}
+                    record={record as Record<string, unknown>}
+                    index={index}
+                    cells={cells}
+                    className={baseClassName}
+                    onClick={handleRowClick}
+                    rowKey={rowKey}
+                  />
+                );
+              }
+
+              // 使用默认的 MemoTableRow
+              return (
+                <MemoTableRow
+                  key={rowKey}
+                  record={record as Record<string, unknown>}
+                  index={index}
+                  columns={
+                    columns as unknown as TableColumn<Record<string, unknown>>[]
+                  }
+                  striped={striped}
+                  hoverable={hoverable}
+                  onRowClick={
+                    onRowClick as
+                      | ((
+                          record: Record<string, unknown>,
+                          index: number,
+                          event: React.MouseEvent,
+                        ) => void)
+                      | undefined
+                  }
+                  rowClassName={rowClassNameStr}
+                  animateRows={animateRows}
+                  getPaddingStyles={getPaddingStyles}
+                  getAlignClass={getAlignClass}
+                  renderCellContent={
+                    renderCellContent as (
+                      column: TableColumn<Record<string, unknown>>,
+                      record: Record<string, unknown>,
+                      index: number,
+                    ) => React.ReactNode
+                  }
+                  padding={padding}
+                  getRowKey={
+                    getRowKey as (
+                      record: Record<string, unknown>,
+                      index: number,
+                    ) => string | number
+                  }
+                />
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// 导出子组件以支持更灵活的使用
+export const TableHeader = motion.thead;
+export const TableBody = motion.tbody;
+export const TableRow = motion.tr;
+export const TableHead = motion.th;
+export const TableCell = motion.td;

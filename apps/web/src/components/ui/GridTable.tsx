@@ -1,0 +1,1726 @@
+"use client";
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  RiArrowLeftSLine,
+  RiArrowRightSLine,
+  RiCheckDoubleLine,
+  RiCloseLine,
+  RiFilterLine,
+  RiSearchLine,
+  RiSubtractLine,
+} from "@remixicon/react";
+import { AnimatePresence, motion } from "framer-motion";
+
+import type { GridArea } from "@/components/client/layout/RowGrid";
+import { GridItem } from "@/components/client/layout/RowGrid";
+import { useMobile } from "@/hooks/use-mobile";
+import { createArray } from "@/lib/client/create-array";
+import { AutoTransition } from "@/ui/AutoTransition";
+import type { ButtonProps } from "@/ui/Button";
+import { Button } from "@/ui/Button";
+import { Checkbox } from "@/ui/Checkbox";
+import Clickable from "@/ui/Clickable";
+import { Dialog } from "@/ui/Dialog";
+import { Input } from "@/ui/Input";
+import { LoadingIndicator } from "@/ui/LoadingIndicator";
+import type { SelectOption } from "@/ui/Select";
+import { Select } from "@/ui/Select";
+import type { RowComponentProps, TableColumn } from "@/ui/Table";
+import { Table } from "@/ui/Table";
+import { Tooltip } from "@/ui/Tooltip";
+
+// 操作按钮配置
+export interface ActionButton {
+  label: string; // 按钮标签，用于批量操作按钮文字和行操作的 tooltip
+  onClick: () => void;
+  icon?: React.ReactNode;
+  variant?: ButtonProps["variant"];
+  disabled?: boolean;
+  loading?: boolean;
+}
+
+// 筛选配置
+export interface FilterConfig {
+  key: string; // 筛选字段的 key，对应 URL 参数名
+  label: string; // 显示标签
+  type: "checkboxGroup" | "input" | "dateRange" | "range"; // 筛选类型
+  options?: SelectOption[]; // checkboxGroup 类型时的选项
+  placeholder?: string; // input 类型的占位符
+  inputType?: "text" | "number"; // input 的具体类型
+  dateFields?: { start: string; end: string }; // dateRange 类型时的字段名
+  rangeFields?: { min: string; max: string }; // range 类型时的字段名
+  placeholderMin?: string; // range 类型最小值占位符
+  placeholderMax?: string; // range 类型最大值占位符
+}
+
+export interface GridTableProps<T extends Record<string, unknown>> {
+  title: React.ReactNode;
+  columns: TableColumn<T>[];
+  data: T[];
+  loading?: boolean;
+  rowKey: keyof T | ((record: T) => string | number);
+  // 分页相关
+  page: number;
+  totalPages: number;
+  totalRecords: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void;
+  // 排序相关
+  onSortChange?: (key: string, order: "asc" | "desc" | null) => void;
+  // 搜索相关
+  onSearchChange?: (search: string) => void;
+  searchPlaceholder?: string;
+  // 筛选相关
+  filterConfig?: FilterConfig[]; // 筛选字段配置
+  onFilterChange?: (
+    filters: Record<
+      string,
+      string | string[] | { start?: string; end?: string }
+    >,
+  ) => void; // 筛选回调
+  externalFilterOpenToken?: number; // 外部触发打开筛选弹窗（值变化即触发）
+  externalFilterValues?: Record<
+    string,
+    string | string[] | { start?: string; end?: string }
+  >; // 外部同步筛选值（用于联动点击筛选）
+  // 表格配置
+  striped?: boolean;
+  hoverable?: boolean;
+  bordered?: boolean;
+  size?: "sm" | "md" | "lg";
+  emptyText?: string;
+  stickyHeader?: boolean;
+  maxHeight?: string;
+  padding?: number;
+  // 操作模式
+  enableActions?: boolean;
+  batchActions?: ActionButton[];
+  rowActions?: (record: T) => ActionButton[];
+  onSelectionChange?: (selectedKeys: (string | number)[]) => void;
+  // 受控选中模式（可选，向后兼容）
+  controlledSelectedKeys?: Set<string | number>;
+  // Shift 范围选择回调（可选）
+  onRangeSelect?: (startIndex: number, endIndex: number) => void;
+  // 行点击事件
+  onRowClick?: (record: T, index: number, event: React.MouseEvent) => void;
+  // GridItem 配置
+  headerHeight?: number;
+  contentAreas?: GridArea[];
+  contentWidth?: number;
+  contentHeight?: number;
+  footerHeight?: number;
+  // 内容区域顶部自定义内容（如面包屑导航）
+  contentHeader?: React.ReactNode;
+  // 自定义行渲染组件（用于拖拽等功能）
+  rowComponent?: React.ComponentType<RowComponentProps>;
+  // 移动端展示模式
+  mobileMode?: "auto" | "cards" | "table";
+}
+
+interface MobileColumnDescriptor<T extends Record<string, unknown>> {
+  column: TableColumn<T>;
+  index: number;
+  role: "title" | "subtitle" | "meta" | "hidden";
+  label: string;
+  order: number;
+  span: 1 | 2;
+  isIdentifier: boolean;
+  isTitleLike: boolean;
+  isSubtitleLike: boolean;
+}
+
+const MOBILE_TITLE_RE =
+  /(title|name|username|nickname|originalname|filename|slug|path|label)/i;
+const MOBILE_SUBTITLE_RE =
+  /(author|email|role|status|type|category|created|updated|time|date|owner)/i;
+const MOBILE_IDENTIFIER_RE = /(^|[_-])(id|uid)([_-]|$)|\b(id|uid)\b/i;
+function hasRenderableValue(value: React.ReactNode): boolean {
+  if (value === null || value === undefined || value === "") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return true;
+}
+
+function getMobileColumnLabel(label: string, key: string): string {
+  const trimmedLabel = label.trim();
+  if (trimmedLabel.length > 0) {
+    return trimmedLabel;
+  }
+
+  return key;
+}
+
+export default function GridTable<T extends Record<string, unknown>>({
+  title,
+  columns,
+  data,
+  loading = false,
+  rowKey,
+  page,
+  totalPages,
+  totalRecords,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+  onSortChange,
+  onSearchChange,
+  searchPlaceholder = "搜索...",
+  filterConfig,
+  onFilterChange,
+  externalFilterOpenToken,
+  externalFilterValues,
+  striped = true,
+  hoverable = true,
+  bordered = false,
+  size = "sm",
+  emptyText = "暂无数据",
+  stickyHeader = true,
+  maxHeight = "100%",
+  padding = 2.5,
+  enableActions = false,
+  batchActions = [],
+  rowActions,
+  onSelectionChange,
+  controlledSelectedKeys,
+  onRangeSelect,
+  onRowClick,
+  headerHeight = 0.1,
+  contentAreas = createArray(2, 11),
+  contentWidth = 24 / 10,
+  contentHeight = 2,
+  footerHeight = 0.1,
+  contentHeader,
+  rowComponent,
+  mobileMode = "auto",
+}: GridTableProps<T>) {
+  // 检测是否为移动设备
+  const isMobile = useMobile();
+  const useMobileCards = isMobile && mobileMode !== "table";
+
+  // 选中状态管理（支持受控/非受控模式）
+  const [internalSelectedKeys, setInternalSelectedKeys] = useState<
+    Set<string | number>
+  >(new Set());
+  const selectedKeys = controlledSelectedKeys ?? internalSelectedKeys;
+  const setSelectedKeys = useCallback(
+    (newKeys: Set<string | number>) => {
+      if (!controlledSelectedKeys) {
+        setInternalSelectedKeys(newKeys);
+      }
+      onSelectionChange?.(Array.from(newKeys));
+    },
+    [controlledSelectedKeys, onSelectionChange],
+  );
+
+  // Shift 范围选择状态
+  const lastClickedIndexRef = useRef<number>(-1);
+  const isShiftHeldRef = useRef(false);
+
+  // 搜索状态管理
+  const [searchValue, setSearchValue] = useState("");
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSearchValueRef = useRef<string>(""); // 记录上次触发的搜索值
+
+  // 筛选状态管理
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [filterValues, setFilterValues] = useState<
+    Record<string, string | string[] | { start?: string; end?: string }>
+  >({});
+  const [tempFilterValues, setTempFilterValues] = useState<
+    Record<string, string | string[] | { start?: string; end?: string }>
+  >({});
+  const lastExternalFilterOpenTokenRef = useRef<number | undefined>(undefined);
+
+  // 标记是否已从 URL 初始化
+  const initializedRef = useRef(false);
+
+  // 从 URL 读取初始筛选参数
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !filterConfig ||
+      initializedRef.current
+    )
+      return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialFilters: Record<
+      string,
+      string | string[] | { start?: string; end?: string }
+    > = {};
+
+    filterConfig.forEach((config) => {
+      if (config.type === "checkboxGroup") {
+        // 多选：URL 格式为 key=value1,value2,value3
+        const value = urlParams.get(config.key);
+        if (value) {
+          initialFilters[config.key] = value.split(",");
+        }
+      } else if (config.type === "dateRange" && config.dateFields) {
+        // 时间区间：分别读取开始和结束时间
+        const startValue = urlParams.get(config.dateFields.start);
+        const endValue = urlParams.get(config.dateFields.end);
+        if (startValue || endValue) {
+          initialFilters[config.key] = {
+            start: startValue || undefined,
+            end: endValue || undefined,
+          };
+        }
+      } else if (config.type === "input") {
+        // 单个输入框
+        const value = urlParams.get(config.key);
+        if (value !== null) {
+          initialFilters[config.key] = value;
+        }
+      }
+    });
+
+    if (Object.keys(initialFilters).length > 0) {
+      setFilterValues(initialFilters);
+      setTempFilterValues(initialFilters);
+      // 通知父组件初始筛选条件
+      onFilterChange?.(initialFilters);
+    }
+
+    initializedRef.current = true;
+  }, [filterConfig, onFilterChange]);
+
+  // 判断是否有激活的筛选
+  const hasActiveFilters = useMemo(() => {
+    return Object.keys(filterValues).length > 0;
+  }, [filterValues]);
+
+  // 搜索输入变化处理（防抖）
+  useEffect(() => {
+    if (!onSearchChange) return;
+
+    // 清除之前的定时器
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // 设置新的定时器，1秒后触发搜索
+    searchTimeoutRef.current = setTimeout(() => {
+      // 只有当搜索值真正变化时才触发回调
+      if (searchValue !== lastSearchValueRef.current) {
+        lastSearchValueRef.current = searchValue;
+        onSearchChange(searchValue);
+      }
+    }, 1000);
+
+    // 清理函数
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [searchValue, onSearchChange]);
+
+  // 记录上一次的 page 值
+  const prevPageRef = useRef(page);
+
+  // 翻页时清理选中状态
+  useEffect(() => {
+    // 只有当 page 真正变化时才清空选中状态
+    if (prevPageRef.current !== page) {
+      if (selectedKeys.size > 0) {
+        setSelectedKeys(new Set());
+      }
+      prevPageRef.current = page;
+    }
+  }, [page, selectedKeys.size, setSelectedKeys]);
+
+  // 获取行的唯一键
+  const getRowKey = useCallback(
+    (record: T): string | number => {
+      return typeof rowKey === "function"
+        ? rowKey(record)
+        : (record[rowKey] as string | number);
+    },
+    [rowKey],
+  );
+
+  const renderColumnContent = useCallback(
+    (column: TableColumn<T>, record: T, index: number): React.ReactNode => {
+      if (column.render) {
+        return column.render(
+          column.dataIndex ? record[column.dataIndex] : record,
+          record,
+          index,
+        );
+      }
+
+      const value = column.dataIndex ? record[column.dataIndex] : "";
+      if (value === null || value === undefined) return "";
+      if (typeof value === "object") return JSON.stringify(value);
+      return String(value);
+    },
+    [],
+  );
+
+  const isInteractiveTarget = useCallback((target: HTMLElement | null) => {
+    if (!target) return false;
+
+    return Boolean(
+      target.tagName === "A" ||
+        target.tagName === "BUTTON" ||
+        target.tagName === "INPUT" ||
+        target.tagName === "SELECT" ||
+        target.tagName === "TEXTAREA" ||
+        target.closest("a") ||
+        target.closest("button") ||
+        target.closest("input") ||
+        target.closest("select") ||
+        target.closest("textarea") ||
+        target.closest('[role="button"]') ||
+        target.closest('[data-action-cell="true"]'),
+    );
+  }, []);
+
+  const mobileColumnDescriptors = useMemo<MobileColumnDescriptor<T>[]>(() => {
+    return columns.map((column, index) => {
+      const searchText = `${column.key} ${column.title}`.toLowerCase();
+      const mobileConfig = column.mobile;
+      const explicitRole = mobileConfig?.role;
+      const isIdentifier =
+        column.mono ||
+        MOBILE_IDENTIFIER_RE.test(searchText) ||
+        ["id", "uid"].includes(column.key.toLowerCase());
+      const isTitleLike = MOBILE_TITLE_RE.test(searchText);
+      const isSubtitleLike = MOBILE_SUBTITLE_RE.test(searchText);
+
+      return {
+        column,
+        index,
+        role: explicitRole ?? "meta",
+        label:
+          mobileConfig?.label ?? getMobileColumnLabel(column.title, column.key),
+        order:
+          mobileConfig?.order ??
+          index +
+            (isIdentifier ? 100 : 0) +
+            (column.key.startsWith("__") ? 1000 : 0),
+        span: mobileConfig?.span ?? 1,
+        isIdentifier,
+        isTitleLike,
+        isSubtitleLike,
+      };
+    });
+  }, [columns]);
+
+  const mobileTitleColumn = useMemo(() => {
+    return mobileColumnDescriptors.find(
+      (descriptor) =>
+        descriptor.role === "title" && !descriptor.column.key.startsWith("__"),
+    );
+  }, [mobileColumnDescriptors]);
+
+  const mobileSubtitleColumn = useMemo(() => {
+    return mobileColumnDescriptors.find(
+      (descriptor) =>
+        descriptor.role === "subtitle" &&
+        descriptor.column.key !== mobileTitleColumn?.column.key &&
+        !descriptor.column.key.startsWith("__"),
+    );
+  }, [mobileColumnDescriptors, mobileTitleColumn]);
+
+  const mobileMetaColumns = useMemo(() => {
+    return mobileColumnDescriptors
+      .filter((descriptor) => {
+        if (descriptor.role === "hidden") return false;
+        if (descriptor.column.key.startsWith("__")) return false;
+        if (descriptor.column.key === mobileTitleColumn?.column.key)
+          return false;
+        if (descriptor.column.key === mobileSubtitleColumn?.column.key)
+          return false;
+        return true;
+      })
+      .sort((left, right) => left.order - right.order);
+  }, [mobileColumnDescriptors, mobileSubtitleColumn, mobileTitleColumn]);
+
+  // 全选/取消全选
+  const handleSelectAll = useCallback(
+    (checked: boolean) => {
+      if (checked) {
+        const allKeys = new Set(data.map(getRowKey));
+        setSelectedKeys(allKeys);
+      } else {
+        setSelectedKeys(new Set());
+      }
+    },
+    [data, getRowKey, setSelectedKeys],
+  );
+
+  // 单选 / Shift 范围选择
+  const handleSelectRow = useCallback(
+    (key: string | number, checked: boolean, index?: number) => {
+      // Shift 范围选择
+      if (
+        isShiftHeldRef.current &&
+        index !== undefined &&
+        lastClickedIndexRef.current !== -1 &&
+        lastClickedIndexRef.current !== index
+      ) {
+        const start = Math.min(lastClickedIndexRef.current, index);
+        const end = Math.max(lastClickedIndexRef.current, index);
+
+        // 通知父组件范围选择（如果提供了回调）
+        if (onRangeSelect) {
+          onRangeSelect(start, end);
+        } else {
+          // 默认行为：选中范围内的所有行
+          const newSelectedKeys = new Set(selectedKeys);
+          for (let i = start; i <= end; i++) {
+            const item = data[i];
+            if (!item) continue;
+            const rowKeyValue = getRowKey(item);
+            if (checked) {
+              newSelectedKeys.add(rowKeyValue);
+            } else {
+              newSelectedKeys.delete(rowKeyValue);
+            }
+          }
+          setSelectedKeys(newSelectedKeys);
+        }
+      } else {
+        // 普通单选
+        const newSelectedKeys = new Set(selectedKeys);
+        if (checked) {
+          newSelectedKeys.add(key);
+        } else {
+          newSelectedKeys.delete(key);
+        }
+        setSelectedKeys(newSelectedKeys);
+      }
+
+      // 记录最后点击的行索引
+      if (index !== undefined) {
+        lastClickedIndexRef.current = index;
+      }
+    },
+    [selectedKeys, setSelectedKeys, data, getRowKey, onRangeSelect],
+  );
+
+  // 监听 Shift 键和 Ctrl+A 全选
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Shift") {
+        isShiftHeldRef.current = true;
+      }
+
+      // Ctrl+A 全选
+      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+        // 检查焦点是否在输入框内
+        const activeElement = document.activeElement;
+        if (
+          activeElement instanceof HTMLInputElement ||
+          activeElement instanceof HTMLTextAreaElement ||
+          activeElement?.getAttribute("contenteditable") === "true"
+        ) {
+          return; // 不阻止输入框内的全选
+        }
+
+        e.preventDefault();
+        handleSelectAll(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift") {
+        isShiftHeldRef.current = false;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [handleSelectAll]);
+
+  // 打开筛选对话框
+  const openFilterDialog = useCallback(() => {
+    setTempFilterValues({ ...filterValues });
+    setFilterDialogOpen(true);
+  }, [filterValues]);
+
+  // 外部触发：打开筛选对话框
+  useEffect(() => {
+    if (externalFilterOpenToken === undefined) {
+      return;
+    }
+    if (lastExternalFilterOpenTokenRef.current === externalFilterOpenToken) {
+      return;
+    }
+    lastExternalFilterOpenTokenRef.current = externalFilterOpenToken;
+    if (filterConfig && filterConfig.length > 0) {
+      openFilterDialog();
+    }
+  }, [externalFilterOpenToken, filterConfig, openFilterDialog]);
+
+  // 外部同步筛选值（确保弹窗内展示与外部联动一致）
+  useEffect(() => {
+    if (!externalFilterValues) {
+      return;
+    }
+
+    const getValueSignature = (
+      value: string | string[] | { start?: string; end?: string },
+    ): string => {
+      if (Array.isArray(value)) {
+        return `arr:${value.join(",")}`;
+      }
+      if (typeof value === "object" && value !== null && "start" in value) {
+        return `range:${value.start || ""}|${value.end || ""}`;
+      }
+      return `str:${String(value)}`;
+    };
+
+    const isSameFilters = (
+      left: Record<
+        string,
+        string | string[] | { start?: string; end?: string }
+      >,
+      right: Record<
+        string,
+        string | string[] | { start?: string; end?: string }
+      >,
+    ): boolean => {
+      const leftKeys = Object.keys(left);
+      const rightKeys = Object.keys(right);
+      if (leftKeys.length !== rightKeys.length) {
+        return false;
+      }
+      for (const key of leftKeys) {
+        if (!(key in right)) {
+          return false;
+        }
+        if (getValueSignature(left[key]!) !== getValueSignature(right[key]!)) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    if (isSameFilters(filterValues, externalFilterValues)) {
+      return;
+    }
+
+    setFilterValues(externalFilterValues);
+    setTempFilterValues(externalFilterValues);
+  }, [externalFilterValues, filterValues]);
+
+  // 关闭筛选对话框
+  const closeFilterDialog = useCallback(() => {
+    setFilterDialogOpen(false);
+  }, []);
+
+  // 更新临时筛选值
+  const updateTempFilterValue = useCallback(
+    (
+      key: string,
+      value: string | string[] | { start?: string; end?: string },
+    ) => {
+      setTempFilterValues((prev) => ({
+        ...prev,
+        [key]: value,
+      }));
+    },
+    [],
+  );
+
+  // 切换 checkbox 选项
+  const toggleCheckboxOption = useCallback((key: string, option: string) => {
+    setTempFilterValues((prev) => {
+      const currentValue = prev[key];
+      const currentArray = Array.isArray(currentValue) ? currentValue : [];
+
+      if (currentArray.includes(option)) {
+        // 移除该选项
+        const newArray = currentArray.filter((v) => v !== option);
+        if (newArray.length === 0) {
+          const { [key]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [key]: newArray };
+      } else {
+        // 添加该选项
+        return { ...prev, [key]: [...currentArray, option] };
+      }
+    });
+  }, []);
+
+  // 应用筛选
+  const applyFilters = useCallback(() => {
+    // 移除空值
+    const cleanedFilters: Record<
+      string,
+      string | string[] | { start?: string; end?: string }
+    > = {};
+    Object.entries(tempFilterValues).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        // checkboxGroup: 只保留非空数组
+        if (value.length > 0) {
+          cleanedFilters[key] = value;
+        }
+      } else if (
+        typeof value === "object" &&
+        value !== null &&
+        "start" in value
+      ) {
+        // dateRange: 至少有一个时间才保留
+        if (value.start || value.end) {
+          cleanedFilters[key] = value;
+        }
+      } else if (value !== "" && value !== undefined && value !== null) {
+        // input: 非空字符串
+        cleanedFilters[key] = value as string;
+      }
+    });
+
+    setFilterValues(cleanedFilters);
+
+    // 更新 URL 参数
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      const params = url.searchParams;
+
+      // 清除旧的筛选参数
+      filterConfig?.forEach((config) => {
+        params.delete(config.key);
+        if (config.type === "dateRange" && config.dateFields) {
+          params.delete(config.dateFields.start);
+          params.delete(config.dateFields.end);
+        }
+      });
+
+      // 添加新的筛选参数
+      Object.entries(cleanedFilters).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          // checkboxGroup: 用逗号连接
+          params.set(key, value.join(","));
+        } else if (
+          typeof value === "object" &&
+          value !== null &&
+          "start" in value
+        ) {
+          // dateRange: 分别设置开始和结束时间
+          const config = filterConfig?.find((c) => c.key === key);
+          if (config?.type === "dateRange" && config.dateFields) {
+            if (value.start) {
+              params.set(config.dateFields.start, value.start);
+            }
+            if (value.end) {
+              params.set(config.dateFields.end, value.end);
+            }
+          }
+        } else {
+          // input: 直接设置
+          params.set(key, String(value));
+        }
+      });
+
+      // 使用 pushState 更新 URL，不刷新页面
+      window.history.pushState({}, "", url.toString());
+    }
+
+    // 通知父组件
+    onFilterChange?.(cleanedFilters);
+
+    // 重置到第一页
+    onPageChange(1);
+
+    closeFilterDialog();
+  }, [
+    tempFilterValues,
+    filterConfig,
+    onFilterChange,
+    onPageChange,
+    closeFilterDialog,
+  ]);
+
+  // 重置筛选
+  const resetFilters = useCallback(() => {
+    setTempFilterValues({});
+    setFilterValues({});
+
+    // 清除 URL 参数
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      const params = url.searchParams;
+
+      filterConfig?.forEach((config) => {
+        params.delete(config.key);
+        if (config.type === "dateRange" && config.dateFields) {
+          params.delete(config.dateFields.start);
+          params.delete(config.dateFields.end);
+        }
+      });
+
+      window.history.pushState({}, "", url.toString());
+    }
+
+    // 通知父组件
+    onFilterChange?.({});
+
+    // 重置到第一页
+    onPageChange(1);
+
+    closeFilterDialog();
+  }, [filterConfig, onFilterChange, onPageChange, closeFilterDialog]);
+
+  // 是否全选
+  const isAllSelected = useMemo(() => {
+    return data.length > 0 && selectedKeys.size === data.length;
+  }, [data.length, selectedKeys.size]);
+
+  // 构建包含复选框和操作列的 columns
+  const enhancedColumns = useMemo(() => {
+    if (!enableActions) {
+      return columns;
+    }
+
+    const newColumns: TableColumn<T>[] = [];
+
+    // 添加复选框列（第一列）
+    newColumns.push({
+      key: "__selection__",
+      title: "",
+      width: "60px",
+      headerRender: () => (
+        <div className="flex items-center justify-center">
+          <Checkbox
+            checked={isAllSelected}
+            onChange={(e) => handleSelectAll(e.target.checked)}
+            size={size}
+          />
+        </div>
+      ),
+      render: (_, record, index) => {
+        const key = getRowKey(record);
+        return (
+          <div
+            className="flex items-center justify-center"
+            data-action-cell="true"
+          >
+            <Checkbox
+              checked={selectedKeys.has(key)}
+              onChange={(e) => handleSelectRow(key, e.target.checked, index)}
+              size={size}
+            />
+          </div>
+        );
+      },
+    });
+
+    // 添加原有列
+    newColumns.push(...columns);
+
+    // 添加操作列（最后一列）
+    if (rowActions) {
+      newColumns.push({
+        key: "__actions__",
+        title: "操作",
+        width: "auto",
+        render: (_, record) => {
+          const actions = rowActions(record);
+          return (
+            <div className="flex items-center" data-action-cell="true">
+              {actions.map((action) => (
+                <Tooltip
+                  key={action.label}
+                  content={action.label}
+                  placement="top"
+                >
+                  <Clickable
+                    onClick={action.onClick}
+                    className={`
+                      p-2 rounded transition-colors
+                      ${action.disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-muted"}
+                      ${action.variant === "danger" ? "text-error" : ""}
+                    `}
+                    disabled={action.disabled}
+                  >
+                    {action.icon}
+                  </Clickable>
+                </Tooltip>
+              ))}
+            </div>
+          );
+        },
+      });
+    }
+
+    return newColumns;
+  }, [
+    enableActions,
+    columns,
+    rowActions,
+    selectedKeys,
+    size,
+    isAllSelected,
+    handleSelectAll,
+    handleSelectRow,
+    getRowKey,
+  ]);
+
+  const getMobileActionButtonVariant = useCallback(
+    (
+      action: ActionButton,
+      fallbackVariant: NonNullable<ButtonProps["variant"]>,
+    ): NonNullable<ButtonProps["variant"]> => {
+      if (action.variant === "danger") {
+        return "ghost";
+      }
+
+      return action.variant || fallbackVariant;
+    },
+    [],
+  );
+
+  const getMobileActionButtonClassName = useCallback((action: ActionButton) => {
+    const baseClassName = "justify-start";
+
+    if (action.variant === "danger") {
+      return `${baseClassName} !bg-transparent !text-error hover:!bg-transparent hover:!text-error`;
+    }
+
+    return baseClassName;
+  }, []);
+
+  const renderMobileCard = useCallback(
+    (record: T, index: number) => {
+      const rowKeyValue = getRowKey(record);
+      const titleContent = mobileTitleColumn
+        ? renderColumnContent(mobileTitleColumn.column, record, index)
+        : null;
+      const subtitleContent = mobileSubtitleColumn
+        ? renderColumnContent(mobileSubtitleColumn.column, record, index)
+        : null;
+      const fieldItems = mobileMetaColumns
+        .map((descriptor) => ({
+          key: descriptor.column.key,
+          label: descriptor.label,
+          span: descriptor.span,
+          content: renderColumnContent(descriptor.column, record, index),
+        }))
+        .filter((field) => hasRenderableValue(field.content));
+      const actions = rowActions?.(record) ?? [];
+      const hasHeaderContent =
+        hasRenderableValue(titleContent) || hasRenderableValue(subtitleContent);
+
+      return (
+        <motion.article
+          key={rowKeyValue}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{
+            duration: 0.18,
+            delay: Math.min(index * 0.03, 0.24),
+          }}
+          className={`
+            rounded-sm border border-border/80 bg-background/95
+            px-4 py-4 shadow-[0_12px_40px_rgba(15,23,42,0.06)]
+            text-left
+            [&_.text-center]:text-left
+            [&_.justify-center]:justify-start
+            ${onRowClick ? "cursor-pointer" : ""}
+          `}
+          onClick={(event) => {
+            if (!onRowClick) return;
+            if (isInteractiveTarget(event.target as HTMLElement)) return;
+            onRowClick(record, index, event);
+          }}
+        >
+          {hasHeaderContent ? (
+            <div className="flex items-start gap-3">
+              {enableActions && (
+                <div className="shrink-0 pt-0.5" data-action-cell="true">
+                  <Checkbox
+                    checked={selectedKeys.has(rowKeyValue)}
+                    onChange={(event) =>
+                      handleSelectRow(rowKeyValue, event.target.checked, index)
+                    }
+                    size="md"
+                  />
+                </div>
+              )}
+
+              <div className="min-w-0 flex-1">
+                {hasRenderableValue(titleContent) && (
+                  <div className="text-left text-base leading-6 text-foreground break-words">
+                    {titleContent}
+                  </div>
+                )}
+                {hasRenderableValue(subtitleContent) && (
+                  <div className="mt-1 text-left text-sm text-muted-foreground break-words">
+                    {subtitleContent}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : enableActions ? (
+            <div className="mb-4 flex items-center" data-action-cell="true">
+              <Checkbox
+                checked={selectedKeys.has(rowKeyValue)}
+                onChange={(event) =>
+                  handleSelectRow(rowKeyValue, event.target.checked, index)
+                }
+                size="md"
+              />
+            </div>
+          ) : null}
+
+          {fieldItems.length > 0 && (
+            <div
+              className={`grid grid-cols-2 gap-x-4 gap-y-3 ${
+                hasHeaderContent || enableActions
+                  ? "mt-4 border-t border-border/60 pt-4"
+                  : ""
+              }`}
+            >
+              {fieldItems.map((field) => (
+                <div
+                  key={field.key}
+                  className={`min-w-0 text-left ${
+                    field.span === 2 ? "col-span-2" : ""
+                  }`}
+                >
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                    {field.label}
+                  </div>
+                  <div className="mt-1 text-left text-sm leading-5 text-foreground break-words [&_.justify-center]:justify-start [&_.text-center]:text-left">
+                    {field.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {actions.length > 0 && (
+            <div
+              className="mt-4 grid grid-cols-2 gap-2 border-t border-border/60 pt-4"
+              data-action-cell="true"
+            >
+              {actions.map((action) => (
+                <Button
+                  key={action.label}
+                  label={action.label}
+                  variant={getMobileActionButtonVariant(action, "ghost")}
+                  size="sm"
+                  icon={action.icon}
+                  onClick={action.onClick}
+                  disabled={action.disabled}
+                  loading={action.loading}
+                  fullWidth
+                  className={getMobileActionButtonClassName(action)}
+                />
+              ))}
+            </div>
+          )}
+        </motion.article>
+      );
+    },
+    [
+      enableActions,
+      getRowKey,
+      getMobileActionButtonClassName,
+      getMobileActionButtonVariant,
+      handleSelectRow,
+      isInteractiveTarget,
+      mobileMetaColumns,
+      mobileSubtitleColumn,
+      mobileTitleColumn,
+      onRowClick,
+      renderColumnContent,
+      rowActions,
+      selectedKeys,
+    ],
+  );
+
+  return (
+    <>
+      {/* 表头 */}
+      <GridItem
+        areas={[1]}
+        width={24}
+        height={headerHeight}
+        className={`flex justify-between gap-3 ${
+          useMobileCards
+            ? "items-center px-4 py-4 text-xl"
+            : "items-center px-10 text-2xl"
+        }`}
+      >
+        <div className={useMobileCards ? "min-w-0 flex-1 text-left" : ""}>
+          {title}
+        </div>
+        <div
+          className={`flex items-center gap-2 ${
+            useMobileCards ? "ml-auto shrink-0 justify-end" : "gap-4"
+          }`}
+        >
+          {useMobileCards && enableActions && data.length > 0 && (
+            <Tooltip
+              content={isAllSelected ? "取消全选" : "全选本页"}
+              placement="bottom"
+            >
+              <Clickable
+                onClick={() => handleSelectAll(!isAllSelected)}
+                className={`
+                  p-2 rounded transition-colors inline-flex
+                  ${isAllSelected ? "text-background bg-foreground" : "hover:bg-muted"}
+                `}
+                hoverScale={1.1}
+              >
+                {isAllSelected ? (
+                  <RiSubtractLine size="1em" />
+                ) : (
+                  <RiCheckDoubleLine size="1em" />
+                )}
+              </Clickable>
+            </Tooltip>
+          )}
+          {onSearchChange && (
+            <>
+              {isMobile ? (
+                // 移动端：显示搜索图标
+                <Tooltip content="搜索" placement="bottom">
+                  <Clickable
+                    onClick={() => setSearchDialogOpen(true)}
+                    className="p-2 rounded transition-colors hover:bg-muted inline-flex"
+                    hoverScale={1.1}
+                  >
+                    <RiSearchLine size="1em" />
+                  </Clickable>
+                </Tooltip>
+              ) : (
+                // 桌面端：显示搜索输入框
+                <div className="relative w-[15em]">
+                  <input
+                    title="search"
+                    type="text"
+                    value={searchValue}
+                    onChange={(e) => setSearchValue(e.target.value)}
+                    className="
+                  relative w-full bg-transparent border-0
+                  px-0 py-2 text-base text-foreground
+                  focus:outline-none
+                "
+                  />
+                  {/* 底部横线 */}
+                  <motion.div
+                    className="absolute bottom-0 left-0 h-0.5 w-full"
+                    initial={{ backgroundColor: "var(--color-foreground)" }}
+                    animate={{
+                      backgroundColor:
+                        searchValue.length > 0
+                          ? "var(--color-primary)"
+                          : "var(--color-foreground)",
+                    }}
+                    transition={{
+                      duration: 0.3,
+                    }}
+                  />
+                  {/* Label - 固定位置，有输入时隐藏 */}
+                  <motion.label
+                    className="absolute top-2 left-0 pointer-events-none whitespace-nowrap flex items-center text-base text-foreground"
+                    animate={{
+                      opacity: searchValue.length > 0 ? 0 : 1,
+                    }}
+                    transition={{
+                      duration: 0.2,
+                    }}
+                  >
+                    <RiSearchLine size="1em" className="inline mr-1" />
+                    {searchPlaceholder}
+                  </motion.label>
+                  {/* 清空按钮 - 有输入时显示在右侧 */}
+                  <AnimatePresence>
+                    {searchValue.length > 0 && (
+                      <motion.button
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -10 }}
+                        transition={{
+                          duration: 0.3,
+                          ease: [0.68, -0.55, 0.265, 1.55],
+                        }}
+                        onClick={() => setSearchValue("")}
+                        className="absolute right-0 top-2 text-primary hover:text-foreground transition-colors cursor-pointer flex items-center"
+                        type="button"
+                      >
+                        <RiCloseLine size="1em" />
+                      </motion.button>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+            </>
+          )}
+          {filterConfig && filterConfig.length > 0 && (
+            <Tooltip
+              content={hasActiveFilters ? "筛选（已激活）" : "筛选"}
+              placement="bottom"
+            >
+              <Clickable
+                onClick={openFilterDialog}
+                className={`
+                  p-2 rounded transition-colors inline-flex
+                  ${hasActiveFilters ? "text-background bg-foreground" : "hover:bg-muted"}
+                `}
+                hoverScale={1.1}
+              >
+                <RiFilterLine size="1em" />
+              </Clickable>
+            </Tooltip>
+          )}
+        </div>
+      </GridItem>
+
+      {/* 表格内容 */}
+      <GridItem
+        areas={contentAreas}
+        width={contentWidth}
+        height={contentHeight}
+      >
+        <div className="flex flex-col h-full">
+          {/* 操作栏（批量操作） */}
+          <AnimatePresence>
+            {enableActions &&
+              batchActions &&
+              batchActions.length > 0 &&
+              selectedKeys.size > 0 && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{
+                    height: { duration: 0.3, ease: "easeInOut" },
+                    opacity: { duration: 0.2, ease: "easeInOut" },
+                  }}
+                  className="overflow-hidden"
+                >
+                  <div
+                    className={`border-b border-muted ${
+                      useMobileCards
+                        ? "px-4 py-3"
+                        : "flex items-center justify-between px-10 py-2"
+                    }`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <AutoTransition key={selectedKeys.size}>
+                        <span className="text-primary">
+                          已选中 {selectedKeys.size} 项
+                        </span>
+                      </AutoTransition>
+                    </div>
+                    <div
+                      className={`${
+                        useMobileCards
+                          ? "mt-3 grid grid-cols-2 gap-2"
+                          : "flex items-center gap-2"
+                      }`}
+                    >
+                      {batchActions.map((action) => (
+                        <Button
+                          key={action.label}
+                          label={action.label || "操作"}
+                          variant={
+                            useMobileCards
+                              ? getMobileActionButtonVariant(action, "outline")
+                              : action.variant || "outline"
+                          }
+                          size={"sm"}
+                          icon={action.icon}
+                          onClick={action.onClick}
+                          disabled={action.disabled || selectedKeys.size === 0}
+                          loading={action.loading}
+                          fullWidth={useMobileCards}
+                          className={
+                            useMobileCards
+                              ? getMobileActionButtonClassName(action)
+                              : ""
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+          </AnimatePresence>
+
+          {/* 自定义内容区域头部（如面包屑导航） */}
+          {contentHeader}
+
+          <AutoTransition type="fade" className="flex-1 overflow-hidden">
+            {loading ? (
+              <div className="h-full" key="loading">
+                <LoadingIndicator />
+              </div>
+            ) : (
+              <div className="h-full flex flex-col" key="content">
+                {useMobileCards ? (
+                  <div className="flex-1 overflow-auto">
+                    {data.length === 0 ? (
+                      <div className="px-4 py-12 text-center text-muted-foreground">
+                        {emptyText}
+                      </div>
+                    ) : (
+                      <div className="space-y-3 px-4 py-4">
+                        {data.map((record, index) =>
+                          renderMobileCard(record, index),
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-auto">
+                    <Table
+                      columns={enhancedColumns}
+                      data={data}
+                      striped={striped}
+                      hoverable={hoverable}
+                      bordered={bordered}
+                      size={size}
+                      emptyText={emptyText}
+                      rowKey={rowKey}
+                      stickyHeader={stickyHeader}
+                      maxHeight={maxHeight}
+                      padding={padding}
+                      onSortChange={onSortChange}
+                      onRowClick={onRowClick}
+                      rowComponent={rowComponent}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </AutoTransition>
+        </div>
+      </GridItem>
+
+      {/* 表尾分页 */}
+      <GridItem
+        areas={[12]}
+        width={24}
+        height={footerHeight}
+        className={
+          useMobileCards ? "px-4 py-4" : "flex justify-between pl-10 pr-6"
+        }
+      >
+        {useMobileCards ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3 text-sm text-muted-foreground sm:text-base">
+                <span className="whitespace-nowrap">
+                  <AutoTransition key={totalRecords} type="fade">
+                    共 {totalRecords} 条
+                  </AutoTransition>
+                </span>
+                <span className="whitespace-nowrap">
+                  <AutoTransition key={page + "" + totalRecords} type="fade">
+                    第 {(page - 1) * pageSize + 1}
+                    {" - "}
+                    {Math.min(page * pageSize, totalRecords)} 条
+                  </AutoTransition>
+                </span>
+              </div>
+
+              {onPageSizeChange && (
+                <div className="shrink-0">
+                  <Select
+                    value={pageSize}
+                    onChange={(value) => {
+                      onPageSizeChange(Number(value));
+                      onPageChange(1);
+                    }}
+                    options={[
+                      { value: 10, label: "10 条/页" },
+                      { value: 25, label: "25 条/页" },
+                      { value: 50, label: "50 条/页" },
+                      { value: 100, label: "100 条/页" },
+                      { value: 250, label: "250 条/页" },
+                      { value: 500, label: "500 条/页" },
+                    ]}
+                    size="sm"
+                  />
+                </div>
+              )}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-3">
+                <Clickable
+                  onClick={() => onPageChange(Math.max(1, page - 1))}
+                  disabled={page === 1}
+                  className="rounded-sm px-4 py-2 transition-colors hover:bg-muted"
+                  enableHoverScale={false}
+                >
+                  <RiArrowLeftSLine />
+                </Clickable>
+
+                <span className="text-sm">
+                  <AutoTransition key={page} type="fade">
+                    第 {page} / {totalPages} 页
+                  </AutoTransition>
+                </span>
+
+                <Clickable
+                  onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+                  disabled={page === totalPages}
+                  className="rounded-sm px-4 py-2 transition-colors hover:bg-muted"
+                  enableHoverScale={false}
+                >
+                  <RiArrowRightSLine />
+                </Clickable>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <AutoTransition key={totalRecords} type="fade">
+                共 {totalRecords} 条
+              </AutoTransition>
+              <span>/</span>
+              <AutoTransition key={page + "" + totalRecords} type="fade">
+                第 {(page - 1) * pageSize + 1}
+                {" - "}
+                {Math.min(page * pageSize, totalRecords)} 条
+              </AutoTransition>
+              <span>/</span>
+              <div className="flex items-center gap-2">
+                {onPageSizeChange && (
+                  <Select
+                    value={pageSize}
+                    onChange={(value) => {
+                      onPageSizeChange(Number(value));
+                      onPageChange(1);
+                    }}
+                    options={[
+                      { value: 10, label: "10 条/页" },
+                      { value: 25, label: "25 条/页" },
+                      { value: 50, label: "50 条/页" },
+                      { value: 100, label: "100 条/页" },
+                      { value: 250, label: "250 条/页" },
+                      { value: 500, label: "500 条/页" },
+                    ]}
+                    size="sm"
+                  />
+                )}
+              </div>
+            </div>
+            <div className="flex items-center">
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-2">
+                  <Clickable
+                    onClick={() => onPageChange(Math.max(1, page - 1))}
+                    disabled={page === 1}
+                    className="px-4 py-2 rounded transition-colors hover:bg-muted"
+                    enableHoverScale={false}
+                  >
+                    <RiArrowLeftSLine />
+                  </Clickable>
+
+                  <span>
+                    <AutoTransition key={page} type="fade">
+                      第 {page} / {totalPages} 页
+                    </AutoTransition>
+                  </span>
+
+                  <Clickable
+                    onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+                    disabled={page === totalPages}
+                    className="px-4 py-2 rounded transition-colors hover:bg-muted"
+                    enableHoverScale={false}
+                  >
+                    <RiArrowRightSLine />
+                  </Clickable>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </GridItem>
+
+      {/* 筛选 Dialog */}
+      <Dialog
+        open={filterDialogOpen}
+        onClose={closeFilterDialog}
+        title="筛选条件"
+        size="md"
+      >
+        <div
+          className={isMobile ? "px-4 py-5 space-y-5" : "px-6 py-6 space-y-6"}
+        >
+          <div className={isMobile ? "space-y-5" : "space-y-6"}>
+            {filterConfig?.map((config) => (
+              <div key={config.key}>
+                {config.type !== "input" && (
+                  <label className="block text-sm font-medium text-foreground mb-3">
+                    {config.label}
+                  </label>
+                )}
+                {config.type === "checkboxGroup" && config.options && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {config.options.map((option) => {
+                      const currentValue = tempFilterValues[config.key];
+                      const currentArray = Array.isArray(currentValue)
+                        ? currentValue
+                        : [];
+                      return (
+                        <Checkbox
+                          key={option.value}
+                          label={option.label}
+                          checked={currentArray.includes(String(option.value))}
+                          onChange={() =>
+                            toggleCheckboxOption(
+                              config.key,
+                              String(option.value),
+                            )
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+                {config.type === "input" && (
+                  <Input
+                    label={config.label}
+                    value={(tempFilterValues[config.key] as string) || ""}
+                    onChange={(e) =>
+                      updateTempFilterValue(config.key, e.target.value)
+                    }
+                    helperText={config.placeholder}
+                    type={config.inputType || "text"}
+                    size="sm"
+                  />
+                )}
+                {config.type === "dateRange" && config.dateFields && (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <Input
+                        label="开始时间"
+                        type="datetime-local"
+                        value={
+                          ((
+                            tempFilterValues[config.key] as
+                              | {
+                                  start?: string;
+                                  end?: string;
+                                }
+                              | undefined
+                          )?.start || "") as string
+                        }
+                        onChange={(e) => {
+                          const currentValue = tempFilterValues[config.key] as
+                            | { start?: string; end?: string }
+                            | undefined;
+                          updateTempFilterValue(config.key, {
+                            start: e.target.value || undefined,
+                            end: currentValue?.end,
+                          });
+                        }}
+                        size="sm"
+                      />
+                    </div>
+                    <div>
+                      <Input
+                        label="结束时间"
+                        type="datetime-local"
+                        value={
+                          ((
+                            tempFilterValues[config.key] as
+                              | {
+                                  start?: string;
+                                  end?: string;
+                                }
+                              | undefined
+                          )?.end || "") as string
+                        }
+                        onChange={(e) => {
+                          const currentValue = tempFilterValues[config.key] as
+                            | { start?: string; end?: string }
+                            | undefined;
+                          updateTempFilterValue(config.key, {
+                            start: currentValue?.start,
+                            end: e.target.value || undefined,
+                          });
+                        }}
+                        size="sm"
+                      />
+                    </div>
+                  </div>
+                )}
+                {config.type === "range" && config.rangeFields && (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <Input
+                        label={config.placeholderMin || "最小值"}
+                        type={config.inputType || "number"}
+                        value={
+                          ((
+                            tempFilterValues[config.key] as
+                              | {
+                                  start?: string;
+                                  end?: string;
+                                }
+                              | undefined
+                          )?.start || "") as string
+                        }
+                        onChange={(e) => {
+                          const currentValue = tempFilterValues[config.key] as
+                            | { start?: string; end?: string }
+                            | undefined;
+                          updateTempFilterValue(config.key, {
+                            start: e.target.value || undefined,
+                            end: currentValue?.end,
+                          });
+                        }}
+                        size="sm"
+                      />
+                    </div>
+                    <div>
+                      <Input
+                        label={config.placeholderMax || "最大值"}
+                        type={config.inputType || "number"}
+                        value={
+                          ((
+                            tempFilterValues[config.key] as
+                              | {
+                                  start?: string;
+                                  end?: string;
+                                }
+                              | undefined
+                          )?.end || "") as string
+                        }
+                        onChange={(e) => {
+                          const currentValue = tempFilterValues[config.key] as
+                            | { start?: string; end?: string }
+                            | undefined;
+                          updateTempFilterValue(config.key, {
+                            start: currentValue?.start,
+                            end: e.target.value || undefined,
+                          });
+                        }}
+                        size="sm"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="pt-4 border-t border-foreground/10">
+            {isMobile ? (
+              <div className="grid grid-cols-1 gap-2">
+                <Button
+                  label="确认"
+                  variant="primary"
+                  onClick={applyFilters}
+                  size="sm"
+                  fullWidth
+                />
+                <Button
+                  label="取消"
+                  variant="ghost"
+                  onClick={closeFilterDialog}
+                  size="sm"
+                  fullWidth
+                />
+                <Button
+                  label="重置"
+                  variant="ghost"
+                  onClick={resetFilters}
+                  size="sm"
+                  fullWidth
+                />
+              </div>
+            ) : (
+              <div className="flex justify-between">
+                <Button
+                  label="重置"
+                  variant="ghost"
+                  onClick={resetFilters}
+                  size="sm"
+                />
+                <div className="flex gap-4">
+                  <Button
+                    label="取消"
+                    variant="ghost"
+                    onClick={closeFilterDialog}
+                    size="sm"
+                  />
+                  <Button
+                    label="确认"
+                    variant="primary"
+                    onClick={applyFilters}
+                    size="sm"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </Dialog>
+
+      {/* 搜索 Dialog（移动端） */}
+      <Dialog
+        open={searchDialogOpen}
+        onClose={() => setSearchDialogOpen(false)}
+        title="搜索"
+        size="sm"
+      >
+        <div className={isMobile ? "px-4 py-5" : "px-6 py-6"}>
+          <Input
+            label="搜索关键词"
+            value={searchValue}
+            onChange={(e) => setSearchValue(e.target.value)}
+            helperText={searchPlaceholder}
+            type="text"
+            size="md"
+            autoFocus
+          />
+          <div
+            className={`border-t border-foreground/10 mt-6 pt-6 ${
+              isMobile ? "grid grid-cols-2 gap-2" : "flex justify-end gap-4"
+            }`}
+          >
+            <Button
+              label="取消"
+              variant="ghost"
+              onClick={() => setSearchDialogOpen(false)}
+              size="sm"
+              fullWidth={isMobile}
+              className={isMobile ? "justify-start" : ""}
+            />
+            <Button
+              label="搜索"
+              variant="primary"
+              onClick={() => setSearchDialogOpen(false)}
+              size="sm"
+              fullWidth={isMobile}
+              className={isMobile ? "justify-start" : ""}
+            />
+          </div>
+        </div>
+      </Dialog>
+    </>
+  );
+}

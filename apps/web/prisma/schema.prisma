@@ -1,0 +1,1209 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../node_modules/.prisma/client"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  uid Int @id @default(autoincrement())
+
+  // 邮件业务
+  email           String  @unique
+  // 邮件验证状态
+  emailVerified   Boolean @default(false)
+  emailVerifyCode String? @db.VarChar(30)
+  // 邮件通知 @deprecated
+  emailNotice     Boolean @default(false)
+
+  // Web Push 通知
+  webPushEnabled Boolean @default(false)
+
+  // 用户信息
+  username String  @unique
+  nickname String? @db.VarChar(50)
+  website  String? @db.VarChar(255)
+  bio      String? @db.VarChar(255)
+  avatar   String? @db.VarChar(255)
+
+  password String?
+
+  // TOTP 两步验证
+  totpSecret      String? @db.VarChar(255) // AES-256-GCM 加密的 TOTP secret
+  totpBackupCodes Json? // 存储加密的备份码数组及使用状态
+
+  // 统计相关
+  createdAt DateTime  @default(now())
+  lastUseAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  role   Role       @default(USER)
+  status UserStatus @default(ACTIVE)
+
+  // 关系
+  accounts          Account[]
+  posts             Post[]
+  comments          Comment[]
+  media             Media[]
+  pages             Page[]
+  notices           Notice[]
+  sentMessages      Message[]                 @relation("SentMessages")
+  conversations     ConversationParticipant[]
+  auditLogs         AuditLog[]
+  refreshTokens     RefreshToken[]
+  passwordResets    PasswordReset[]
+  passkeys          Passkey[]
+  commentLikes      CommentLike[]
+  pushSubscriptions PushSubscription[]
+  mailSubscriptions MailSubscription[]
+  virtualFolders    VirtualFolder[]
+  projects          Project[]
+  ownedLinks        FriendLink[]              @relation("LinkOwner")
+  auditedLinks      FriendLink[]              @relation("LinkAuditor")
+
+  // 索引优化
+  @@index([role])
+  @@index([status])
+  @@index([createdAt])
+  @@index([lastUseAt])
+}
+
+// 第三方账户模型 (用于SSO登录)
+model Account {
+  id                String          @id @default(uuid())
+  userUid           Int
+  type              String // oauth
+  provider          AccountProvider
+  providerAccountId String // 第三方平台的用户ID
+
+  user User @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  // 复合唯一约束，确保同一个用户不能重复绑定同一个第三方账户
+  @@unique([provider, providerAccountId])
+  @@unique([userUid, provider])
+  // 索引优化
+  @@index([userUid])
+  @@index([provider])
+}
+
+// refresh token 模型
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userUid   Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  // 安全相关拓展
+  ipAddress  String?   @db.VarChar(45)
+  userAgent  String?   @db.VarChar(1000)
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  // 索引优化
+  @@index([userUid])
+  @@index([expiresAt])
+}
+
+// 密码重置
+model PasswordReset {
+  id        String   @id @default(uuid())
+  userUid   Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  @@index([createdAt])
+}
+
+// 通行密钥模型 (用于 WebAuthn 身份验证)
+model Passkey {
+  id      String @id @default(uuid())
+  userUid Int
+
+  // WebAuthn 核心字段
+  credentialId String   @unique @db.VarChar(500) // Base64URL 编码的凭证ID
+  publicKey    String   @db.Text // Base64 编码的公钥
+  counter      BigInt   @default(0) // 防重放攻击计数器
+  transports   String[] // 传输方式
+
+  // 用户友好字段
+  name String @db.VarChar(100) // 用户自定义名称
+
+  // 设备信息
+  deviceType String? @db.VarChar(50) // 设备类型
+  browser    String? @db.VarChar(100) // 注册时的浏览器
+
+  // 时间戳
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  // 关系
+  user User @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  @@index([userUid])
+  @@index([credentialId])
+  @@index([lastUsedAt])
+}
+
+model Post {
+  id                  Int                      @id @default(autoincrement())
+  title               String
+  titleSearchVector   Unsupported("tsvector")?
+  slug                String                   @unique
+  content             String // 存储最新内容
+  versionMetadata     String // 存储版本历史元数据
+  contentSearchVector Unsupported("tsvector")?
+  plain               String? // 存储纯文本内容，用于搜索高亮截取
+  excerpt             String?                  @db.VarChar(500)
+  status              PostStatus               @default(DRAFT)
+  isPinned            Boolean                  @default(false)
+  allowComments       Boolean                  @default(true)
+  publishedAt         DateTime? // 发布时间，用于精确控制发布时间
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  tokenizedAt         DateTime?
+  deletedAt           DateTime?
+  postMode            PostMode                 @default(MARKDOWN)
+  license             String?                  @db.VarChar(32) // 版权许可代码，null 表示跟随默认配置
+
+  userUid Int
+
+  // SEO
+  metaDescription String? @db.VarChar(160)
+  metaKeywords    String? @db.VarChar(255)
+  robotsIndex     Boolean @default(true)
+
+  // 关系
+  author     User       @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+  tags       Tag[]
+  categories Category[]
+  comments   Comment[]
+
+  // 访问统计关系
+  viewCount ViewCountCache?
+  mediaRefs MediaReference[]
+
+  // 索引优化
+  @@index([status])
+  @@index([userUid])
+  @@index([isPinned])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@index([status, createdAt]) // 复合索引：按状态和时间查询
+  @@index([titleSearchVector], type: Gin)
+  @@index([contentSearchVector], type: Gin)
+}
+
+model Tag {
+  slug        String           @id
+  name        String           @unique
+  description String?          @db.VarChar(255)
+  mediaRefs   MediaReference[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  posts       Post[]
+  project     Project[]
+}
+
+model Category {
+  id          Int              @id @default(autoincrement())
+  slug        String
+  name        String
+  description String?          @db.VarChar(255)
+  mediaRefs   MediaReference[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // 层级关系
+  parentId Int?
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children Category[] @relation("CategoryHierarchy")
+
+  // 优化字段：物化路径与排序
+  path     String @default("") @db.VarChar(2048) // 祖先分类的 ID 路径，如 "/1/5/10/"
+  depth    Int    @default(0)
+  order    Int    @default(0)
+  fullSlug String @default("") @db.VarChar(2048) // 完整的 slug 路径，如 "tech/web/frontend"
+
+  posts   Post[]
+  project Project[]
+
+  // 唯一约束：同一父分类下 slug 和 name 唯一
+  @@unique([parentId, slug])
+  @@unique([parentId, name])
+  @@unique([fullSlug]) // 全局唯一
+  // 索引优化
+  @@index([parentId])
+  @@index([slug])
+  @@index([createdAt])
+  @@index([path])
+  @@index([depth])
+  @@index([fullSlug]) // 用于快速查找
+}
+
+// 评论模型
+model Comment {
+  id        String        @id @default(uuid())
+  content   String
+  ipAddress String?       @db.VarChar(45) // IP地址，用于反垃圾评论
+  userAgent String?       @db.VarChar(500) // 用户代理，用于识别浏览器和设备
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+  status    CommentStatus @default(PENDING)
+
+  // 关系
+  postId Int?
+  post   Post?   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  pageId String?
+  page   Page?   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  // 登录用户评论
+  userUid       Int?
+  user          User?     @relation(fields: [userUid], references: [uid], onDelete: SetNull)
+  // 未登录用户评论
+  authorName    String?   @db.VarChar(50)
+  authorEmail   String?   @db.VarChar(255)
+  authorWebsite String?   @db.VarChar(255)
+  // 嵌套评论
+  parentId      String?
+  parent        Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       Comment[] @relation("CommentReplies")
+
+  // 层级树形结构字段
+  depth      Int    @default(0) // 层级深度 (0=顶级评论)
+  path       String @default("") @db.VarChar(2000) // 物化路径，如 "rootId/parentId/selfId"
+  sortKey    String @default("") @db.VarChar(500) // DFS 排序键，保证树形顺序
+  replyCount Int    @default(0) // 直接子评论数量
+
+  // 点赞相关
+  likes     CommentLike[]
+  likeCount Int           @default(0) // 点赞总数（冗余字段，提升查询性能）
+
+  // 索引优化
+  @@index([postId])
+  @@index([pageId])
+  @@index([userUid])
+  @@index([status])
+  @@index([parentId])
+  @@index([createdAt])
+  @@index([postId, status]) // 复合索引：按文章和状态查询
+  @@index([pageId, status]) // 复合索引：按页面和状态查询
+  @@index([userUid, status]) // 复合索引：按用户和状态查询
+  @@index([status, createdAt]) // 复合索引：按状态和时间查询
+  @@index([postId, status, sortKey]) // 复合索引：按 DFS 顺序查询评论树
+  @@index([pageId, status, sortKey]) // 复合索引：按 DFS 顺序查询评论树
+  @@index([postId, status, depth]) // 复合索引：按层级过滤
+  @@index([pageId, status, depth]) // 复合索引：按层级过滤
+  @@index([path]) // 物化路径索引：用于查找子树
+}
+
+// 评论点赞模型
+model CommentLike {
+  id        String   @id @default(uuid())
+  commentId String
+  userUid   Int
+  createdAt DateTime @default(now())
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  @@unique([commentId, userUid]) // 防止重复点赞
+  @@index([commentId])
+  @@index([userUid])
+  @@index([createdAt])
+}
+
+// 虚拟文件夹模型 - 用于媒体文件的组织管理
+model VirtualFolder {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(100)
+
+  // 系统文件夹类型
+  systemType SystemFolderType @default(NORMAL)
+
+  // 层级关系
+  parentId Int?
+  parent   VirtualFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children VirtualFolder[] @relation("FolderHierarchy")
+
+  // 优化字段：物化路径与排序
+  path  String @default("") @db.VarChar(2048) // 祖先文件夹的 ID 路径，如 "/1/5/10/"
+  depth Int    @default(0) // 层级深度 (0=顶级文件夹)
+  order Int    @default(0) // 同级排序
+
+  // 描述
+  description String? @db.VarChar(255)
+
+  // 所属用户（USER_HOME 和 NORMAL 文件夹必需，ROOT_* 可选）
+  userUid Int?
+  user    User? @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  // 关联的媒体文件
+  media Media[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 唯一约束：同一父文件夹下名称唯一
+  @@unique([parentId, name])
+  // 索引优化
+  @@index([parentId])
+  @@index([systemType])
+  @@index([userUid])
+  @@index([path])
+  @@index([depth])
+  @@index([order])
+  @@index([createdAt])
+}
+
+// 媒体文件模型
+model Media {
+  id           Int       @id @default(autoincrement())
+  fileName     String
+  originalName String
+  mimeType     String    @db.VarChar(100)
+  size         Int // 大小，单位字节
+  shortHash    String    @db.VarChar(12)
+  hash         String    @db.VarChar(64)
+  mediaType    MediaType @default(IMAGE)
+
+  // 图片相关
+  width       Int?
+  height      Int?
+  altText     String? @db.VarChar(255)
+  blur        String? @db.VarChar(2048)
+  thumbnails  Json
+  exif        Json
+  isOptimized Boolean @default(false)
+
+  storageUrl        String   @db.VarChar(500)
+  persistentPath    String?  @db.VarChar(255) // 持久化到 public 的相对路径（如 avatar.jpg）
+  createdAt         DateTime @default(now())
+  storageProviderId String
+
+  // 图库相关
+  // inGallery       Boolean         @default(false) 删除这个字段，使用是否有 galleryPhoto 关系来判断
+  galleryPhoto Photo?
+
+  // 上传者
+  userUid Int
+  user    User @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  // 虚拟文件夹关联
+  folderId Int?
+  folder   VirtualFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  StorageProvider StorageProvider @relation(fields: [storageProviderId], references: [id], onDelete: Restrict)
+
+  // 引用关系
+  references MediaReference[]
+
+  @@unique([shortHash])
+  // 索引优化
+  @@index([userUid])
+  @@index([folderId])
+  @@index([createdAt])
+  @@index([fileName])
+}
+
+model Photo {
+  id          Int         @id @default(autoincrement())
+  slug        String      @unique
+  name        String      @db.VarChar(100)
+  size        GallerySize @default(AUTO)
+  description String?
+
+  showExif Boolean @default(true)
+  hideGPS  Boolean @default(true)
+
+  // Exif 覆盖信息，显示的时候与 Media.exif 合并
+  overrideExif Json?
+
+  media   Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaId Int   @unique
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  shotAt    DateTime?
+  sortTime  DateTime  @default(now())
+
+  // 索引优化
+  @@index([sortTime(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+}
+
+// 媒体引用关系表 - 统一管理所有图片引用
+model MediaReference {
+  id      String @id @default(uuid())
+  mediaId Int // 引用的媒体 ID
+  media   Media  @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+
+  // 引用字段名
+  slot String @db.VarChar(50)
+
+  // 关系
+  // 文章相关
+  postId Int?
+  post   Post? @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  // 页面相关
+  pageId String?
+  page   Page?   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  // 标签相关
+  tagSlug String?
+  tag     Tag?    @relation(fields: [tagSlug], references: [slug], onDelete: Cascade, onUpdate: Cascade)
+
+  // 分类相关
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  // 项目相关
+  projectId Int?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // 时间戳
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 唯一约束：同一实体的同一插槽不能重复引用同一媒体
+  @@unique([mediaId, postId, slot])
+  @@unique([mediaId, pageId, slot])
+  @@unique([mediaId, tagSlug, slot])
+  @@unique([mediaId, categoryId, slot])
+  @@index([mediaId])
+  @@index([postId, slot])
+  @@index([pageId, slot])
+  @@index([tagSlug, slot])
+  @@index([categoryId, slot])
+}
+
+model StorageProvider {
+  id          String              @id @default(uuid())
+  name        String              @unique @db.VarChar(50) // local/aws-s3/aliyun-oss/qcloud-cos
+  type        StorageProviderType @default(LOCAL) // 存储提供商类型
+  displayName String              @db.VarChar(100) // 显示名称
+  baseUrl     String              @db.VarChar(255) // 基础访问URL
+  isActive    Boolean             @default(true) // 是否启用
+  isDefault   Boolean             @default(false) // 是否为默认存储
+
+  // 配置信息
+  config Json // 存储配置
+
+  // 限制设置
+  maxFileSize Int @default(52428800) // 最大文件大小(字节) 默认50MB
+
+  // 路径模板
+  pathTemplate String @default("/{year}/{month}/{filename}") // 路径生成模板
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  media Media[]
+
+  @@index([isActive])
+}
+
+// 静态页面模型
+model Page {
+  id          String          @id @default(uuid())
+  title       String
+  slug        String          @unique
+  content     String          @db.Text
+  contentType PageContentType @default(MARKDOWN)
+  config      Json?
+  status      PageStatus      @default(ACTIVE)
+  deletedAt   DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  // 是否为系统预设页面
+  isSystemPage Boolean @default(false)
+
+  // SEO
+  metaDescription String? @db.VarChar(160)
+  metaKeywords    String? @db.VarChar(255)
+  robotsIndex     Boolean @default(true)
+
+  // 创建者
+  userUid Int?
+  author  User? @relation(fields: [userUid], references: [uid], onDelete: SetNull)
+
+  // 导航关系
+  menus     Menu[]
+  mediaRefs MediaReference[]
+  comments  Comment[]
+
+  // 索引优化
+  @@index([status])
+  @@index([userUid])
+  @@index([createdAt])
+}
+
+model Menu {
+  id        String       @id @default(uuid())
+  name      String       @db.VarChar(100)
+  icon      String?      @db.VarChar(100)
+  link      String?      @db.VarChar(255)
+  slug      String?      @db.VarChar(100)
+  status    MenuStatus   @default(ACTIVE)
+  order     Int          @default(0)
+  category  MenuCategory @default(COMMON)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // 页面关系 - 如果关联页面，则使用页面的 slug 和 title
+  pageId String?
+  page   Page?   @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@unique([slug]) // 移到此处，因为 slug 现在是可选的
+  // 索引优化
+  @@index([name])
+  @@index([createdAt])
+  @@index([pageId])
+}
+
+// 网站配置模型
+model Config {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  // 索引优化
+  @@index([updatedAt])
+}
+
+model Notice {
+  id        String   @id @default(uuid())
+  userUid   Int
+  isRead    Boolean  @default(false)
+  title     String // 通知标题
+  content   String // 通知正文
+  link      String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  @@index([userUid, isRead])
+}
+
+model Conversation {
+  id String @id @default(uuid()) // UUID，同时用作 Ably 的普通频道名
+
+  // 排序字段：每次有新消息时，更新此时间。
+  // 用于前端列表页：ORDER BY updatedAt DESC
+  updatedAt DateTime @default(now()) @updatedAt
+  createdAt DateTime @default(now())
+
+  lastMessageId String? // 最后一条消息 ID，方便快速显示预览
+
+  // 关系
+  participants ConversationParticipant[]
+  messages     Message[]
+}
+
+model ConversationParticipant {
+  conversationId String
+  userUid        Int
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  // 最后一条消息
+  lastMessageAt DateTime @default(now())
+
+  isVisible Boolean @default(true)
+
+  // 单会话未读数
+  unreadCount Int @default(0)
+
+  // 已读判断
+  lastReadMessageId String?
+
+  // 通知发送防抖
+  lastNotifiedAt DateTime?
+
+  // 关系
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  // 联合主键：确保一个用户在一个会话里只有一条状态记录
+  @@id([conversationId, userUid])
+  // 索引：用于快速查询"我的会话列表"和"我的总未读数"
+  @@index([userUid, updatedAt(sort: Desc)])
+  @@index([userUid, lastMessageAt(sort: Desc)])
+}
+
+model Message {
+  id String @id @default(uuid())
+
+  // 消息内容
+  content String @db.Text
+
+  // 引用回复
+  replyToMessageId String?
+  replyTo          Message?  @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          Message[] @relation("MessageReplies")
+
+  // 消息类型
+  type MessageType @default(TEXT)
+
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  // 外键
+  conversationId String
+  senderUid      Int
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation("SentMessages", fields: [senderUid], references: [uid], onDelete: Cascade)
+
+  // 索引：用于进入聊天室时分页拉取历史记录
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([senderUid])
+  @@index([replyToMessageId])
+}
+
+// 访问量缓存表 - 用于高性能访问统计查询
+model ViewCountCache {
+  path         String   @id @db.VarChar(500) // 路径作为主键
+  cachedCount  Int      @default(0) // 缓存的访问总数
+  lastArchived DateTime @default(now()) // 上次存档时间
+  lastUpdated  DateTime @updatedAt // 上次更新时间
+
+  // 文章关系
+  postSlug String? @unique
+  post     Post?   @relation(fields: [postSlug], references: [slug], onDelete: Cascade, onUpdate: Cascade)
+
+  // 索引优化
+  @@index([lastArchived])
+  @@index([cachedCount])
+}
+
+// 页面浏览记录模型
+model PageView {
+  id        String   @id @default(uuid())
+  path      String   @db.VarChar(500)
+  timestamp DateTime @default(now())
+
+  // 网络信息
+  ipAddress String  @db.VarChar(45)
+  userAgent String? @db.VarChar(1000)
+  referer   String? @db.VarChar(500)
+
+  // 地理位置信息（由 IP 解析得到）
+  country String? @db.VarChar(100) // 国家，如 "中国"
+  region  String? @db.VarChar(100) // 省份/州
+  city    String? @db.VarChar(100) // 城市
+
+  // 设备和浏览器信息
+  browser        String? @db.VarChar(50)
+  browserVersion String? @db.VarChar(20)
+  os             String? @db.VarChar(50)
+  osVersion      String? @db.VarChar(20)
+  deviceType     String? @db.VarChar(20) // desktop/mobile/tablet
+
+  // 屏幕和显示信息
+  screenSize String? @db.VarChar(20) // "1920x1080" 格式
+  language   String? @db.VarChar(10) // zh-CN, en-US等
+  timezone   String? @db.VarChar(50)
+
+  // 会话和访客跟踪
+  visitorId String @db.VarChar(100) // 访客ID
+  duration  Int?   @default(0) // 停留时长（秒）
+
+  // 索引优化
+  @@index([path, timestamp])
+  @@index([timestamp])
+  @@index([visitorId])
+  @@index([country, timestamp]) // 按国家统计
+  @@index([region, timestamp]) // 按地区统计
+  @@index([city, timestamp]) // 按城市统计
+}
+
+// 页面浏览存档表 - 压缩存储历史浏览数据
+model PageViewArchive {
+  id   String   @id @default(uuid())
+  date DateTime @unique @db.Date // 存档日期(每天一条记录)
+
+  // 汇总统计数据
+  totalViews     Int @default(0)
+  uniqueVisitors Int @default(0)
+  totalSessions  Int @default(0)
+  bounces        Int @default(0) // 跳出次数（单页会话）
+  totalDuration  Int @default(0) // 总停留时长（秒）
+
+  // 路径统计(聚合所有路径的访问数据)
+  pathStats Json? // { "path1": { views: 100, visitors: 50 }, "path2": { ... } }
+
+  refererStats Json?
+
+  countryStats Json?
+  regionStats  Json?
+  cityStats    Json?
+
+  deviceStats  Json?
+  browserStats Json?
+  osStats      Json?
+
+  screenStats   Json?
+  languageStats Json?
+  timezoneStats Json?
+
+  createdAt DateTime @default(now())
+
+  // 索引优化
+  @@index([date])
+}
+
+// 审计日志模型 - 记录系统操作和数据变更
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  timestamp DateTime @default(now())
+
+  // 操作信息
+  action     String @db.VarChar(50) // CREATE/UPDATE/DELETE/LOGIN/LOGOUT等
+  resource   String @db.VarChar(50) // User/Post/Comment/Config等资源类型
+  resourceId String @db.VarChar(255) // 资源ID
+
+  // 操作者信息
+  userUid   Int?
+  user      User?   @relation(fields: [userUid], references: [uid], onDelete: SetNull)
+  ipAddress String  @db.VarChar(45)
+  userAgent String? @db.VarChar(1000)
+
+  // 变更详情
+  oldData Json? // 变更前的数据
+  newData Json? // 变更后的数据
+
+  // 附加信息
+  description String? @db.VarChar(500) // 操作描述
+  metadata    Json? // 额外的元数据
+
+  // 索引优化
+  @@index([userUid])
+  @@index([timestamp])
+  @@index([action])
+  @@index([resource])
+  @@index([resourceId])
+  @@index([action, resource]) // 复合索引：按操作类型和资源类型查询
+  @@index([userUid, timestamp]) // 复合索引：按用户和时间查询
+}
+
+model SearchLog {
+  id Int @id @default(autoincrement())
+
+  query  String   @db.VarChar(255) // 原始内容
+  tokens String[] // 分词后的内容数组
+
+  resultCount Int // 搜到了多少个结果
+
+  ip        String?
+  sessionId String?
+  visitorId String?
+
+  durationMs Int? // 性能指标（毫秒）
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([query])
+}
+
+model CustomDictionary {
+  id Int @id @default(autoincrement())
+
+  word String @unique
+
+  createdAt DateTime @default(now())
+}
+
+model HealthCheck {
+  id         Int      @id @default(autoincrement())
+  startedAt  DateTime @default(now())
+  durationMs Int
+
+  triggerType HealthCheckTriggerType
+
+  overallStatus HealthStatus
+  okCount       Int
+  warningCount  Int
+  errorCount    Int
+
+  snapshot Json
+
+  createdAt DateTime @default(now())
+
+  @@index([startedAt(sort: Desc)])
+  @@index([overallStatus, startedAt(sort: Desc)])
+  @@index([triggerType, startedAt(sort: Desc)])
+}
+
+model CronHistory {
+  id         Int      @id @default(autoincrement())
+  startedAt  DateTime @default(now())
+  durationMs Int
+
+  triggerType CronTriggerType
+  status      CronRunStatus
+
+  totalCount   Int
+  enabledCount Int
+  successCount Int
+  failedCount  Int
+  skippedCount Int
+
+  snapshot Json
+
+  createdAt DateTime @default(now())
+
+  @@index([startedAt(sort: Desc)])
+  @@index([status, startedAt(sort: Desc)])
+  @@index([triggerType, startedAt(sort: Desc)])
+}
+
+model CloudTriggerHistory {
+  id         Int    @id @default(autoincrement())
+  deliveryId String @unique @db.VarChar(80)
+
+  requestedAt DateTime?
+  receivedAt  DateTime  @default(now())
+
+  triggerType  CronTriggerType
+  verifyOk     Boolean
+  verifySource String?         @db.VarChar(16)
+
+  accepted Boolean            @default(false)
+  dedupHit Boolean            @default(false)
+  status   CloudTriggerStatus
+
+  message       String? @db.VarChar(500)
+  cronHistoryId Int?
+  telemetry     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([receivedAt(sort: Desc)])
+  @@index([status, receivedAt(sort: Desc)])
+}
+
+enum HealthStatus {
+  OK
+  WARNING
+  ERROR
+}
+
+enum HealthCheckTriggerType {
+  MANUAL
+  AUTO
+  CRON
+}
+
+enum CronTriggerType {
+  MANUAL
+  CLOUD
+  AUTO
+}
+
+enum CronRunStatus {
+  OK
+  PARTIAL
+  ERROR
+}
+
+enum CloudTriggerStatus {
+  RECEIVED
+  DONE
+  ERROR
+  REJECTED
+}
+
+enum MailSubscriptionStatus {
+  PENDING_VERIFY
+  ACTIVE
+  UNSUBSCRIBED
+}
+
+model MailSubscription {
+  id    Int    @id @default(autoincrement())
+  email String @unique @db.VarChar(255)
+
+  // 关联用户（匿名可为空）
+  userUid Int?
+  user    User? @relation(fields: [userUid], references: [uid], onDelete: SetNull)
+
+  status MailSubscriptionStatus @default(PENDING_VERIFY)
+
+  // 二次验证（开启 check 时使用）
+  verifyTokenHash      String?   @db.VarChar(128)
+  verifyTokenExpiresAt DateTime?
+  verifiedAt           DateTime?
+
+  // 退订链接失效控制（每次退订后 +1）
+  unsubscribeVersion Int       @default(1)
+  unsubscribedAt     DateTime?
+
+  // 记录上次已发送的文章
+  lastSentPostId Int?
+  lastSentAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([status, lastSentPostId])
+  @@index([userUid])
+  @@index([verifyTokenExpiresAt])
+}
+
+// Web Push 订阅模型
+model PushSubscription {
+  id      String @id @default(uuid())
+  userUid Int
+
+  // Web Push 订阅信息
+  endpoint String @db.VarChar(500)
+  p256dh   String @db.VarChar(100) // keys.p256dh
+  auth     String @db.VarChar(50) // keys.auth
+
+  // 设备信息
+  userAgent  String? @db.VarChar(1000)
+  browser    String? @db.VarChar(100)
+  os         String? @db.VarChar(100)
+  deviceName String  @db.VarChar(100) // 用户自定义名称
+
+  // 状态管理
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  user User @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  @@unique([endpoint])
+  @@index([userUid, isActive])
+  @@index([lastUsedAt])
+}
+
+model Project {
+  id          Int     @id @default(autoincrement())
+  title       String  @db.VarChar(200)
+  slug        String  @unique @db.VarChar(200)
+  description String  @db.Text
+  content     String? @db.Text
+
+  // seo
+  metaDescription String? @db.VarChar(160)
+  metaKeywords    String? @db.VarChar(255)
+  robotsIndex     Boolean @default(true)
+
+  // 展示控制
+  isFeatured Boolean @default(false)
+  sortOrder  Int     @default(0)
+
+  demoUrl   String?  @db.VarChar(500)
+  repoUrl   String?  @db.VarChar(500)
+  urls      String[]
+  techStack String[]
+
+  // GitHub 相关字段
+  repoPath         String? @db.VarChar(100) // 如 "username/repo"
+  stars            Int     @default(0)
+  forks            Int     @default(0)
+  languages        Json?
+  license          String? @db.VarChar(100)
+  enableGithubSync Boolean @default(true)
+  enableConentSync Boolean @default(true)
+
+  status    ProjectStatus @default(PUBLISHED)
+  deletedAt DateTime?
+
+  userUid Int
+  author  User @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  tags       Tag[]
+  categories Category[]
+
+  mediaRefs MediaReference[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  @@index([status])
+  @@index([status, deletedAt])
+  @@index([deletedAt])
+  @@index([slug])
+  @@index([createdAt])
+}
+
+model FriendLink {
+  id Int @id @default(autoincrement())
+
+  // 基本信息
+  name   String  @db.VarChar(100)
+  url    String  @db.VarChar(500)
+  avatar String? @db.VarChar(500)
+  slogan String? @db.VarChar(255)
+
+  // 回链检测
+  friendLinkUrl  String? @db.VarChar(500)
+  ignoreBacklink Boolean @default(false)
+
+  // 展示配置
+  group String? @db.VarChar(50)
+  order Int     @default(0) // 同组内排序
+
+  // 状态
+  status FriendLinkStatus @default(PENDING)
+
+  // 健康检查统计
+  checkSuccessCount Int       @default(0)
+  checkFailureCount Int       @default(0)
+  lastCheckedAt     DateTime?
+
+  // 最近30次检查结果（JSON 数组）
+  checkHistory    Json? // [{ time, responseTime, hasBacklink }]
+  avgResponseTime Int?
+
+  // 申请相关
+  ownerId   Int?    @map("owner_uid")
+  owner     User?   @relation("LinkOwner", fields: [ownerId], references: [uid], onDelete: SetNull)
+  applyNote String? @db.VarChar(1000) // 申请备注
+
+  // 审核相关
+  auditorId Int?  @map("auditor_uid")
+  auditor   User? @relation("LinkAuditor", fields: [auditorId], references: [uid], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+  deletedAt   DateTime?
+
+  @@unique([ownerId])
+  @@index([deletedAt])
+  @@index([status, deletedAt])
+  @@index([status])
+  @@index([group, order])
+  @@index([lastCheckedAt])
+}
+
+enum FriendLinkStatus {
+  PENDING // 待审核
+  PUBLISHED // 正常显示
+  REJECTED // 已拒绝
+  DISCONNECT // 无法访问
+  NO_BACKLINK // 无回链
+  BLOCKED // 已拉黑
+  WHITELIST // 白名单，永久有效且跳过检查
+}
+
+enum ProjectStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  DEVELOPING
+}
+
+enum Role {
+  USER
+  ADMIN
+  EDITOR
+  AUTHOR
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  NEEDS_UPDATE
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PageStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum CommentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SPAM
+}
+
+enum MenuCategory {
+  MAIN
+  COMMON
+  OUTSITE
+}
+
+enum MenuStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum PostMode {
+  MARKDOWN
+  MDX
+}
+
+enum PageContentType {
+  MARKDOWN
+  HTML
+  MDX
+  BLOCK
+  BUILDIN
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+}
+
+enum StorageProviderType {
+  LOCAL
+  AWS_S3
+  GITHUB_PAGES
+  VERCEL_BLOB
+  EXTERNAL_URL
+}
+
+enum AccountProvider {
+  GOOGLE
+  GITHUB
+  MICROSOFT
+}
+
+enum MessageType {
+  TEXT
+  SYSTEM
+}
+
+enum GallerySize {
+  SQUARE
+  TALL
+  WIDE
+  LARGE
+  AUTO
+}
+
+enum SystemFolderType {
+  NORMAL // 普通文件夹 (默认)
+  ROOT_PUBLIC // 公共根目录 (对应 /Public，所有用户可见)
+  ROOT_USERS // 用户总目录 (对应 /Users，仅管理员可见)
+  USER_HOME // 用户家目录 (对应 /Users/{username}，仅该用户和管理员可见)
+}

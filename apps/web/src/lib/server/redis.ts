@@ -1,0 +1,109 @@
+import "server-only";
+
+import Redis from "ioredis";
+
+import { parseRedisConnectionOptions } from "@/lib/shared/redis-url";
+
+const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
+
+// 构建阶段没有 REDIS_URL 时，使用兜底地址并保持 lazyConnect
+
+// Redis 配置选项
+const redisOptions = {
+  // 1. 允许重试
+  maxRetriesPerRequest: 1,
+
+  // 2. 开启懒连接
+  lazyConnect: true,
+
+  // 3. 开启离线队列
+  enableOfflineQueue: true,
+
+  // 4. 缩短超时
+  connectTimeout: 4000,
+  commandTimeout: 4000,
+
+  // 5. 失败策略：如果连接断开，不要无限重连，防止 Serverless 函数挂起直到超时
+  retryStrategy: (times: number) => {
+    // 如果重试超过 3 次，或者总时间超过 200ms，就停止重连
+    if (times > 3) {
+      return null;
+    }
+    return Math.min(times * 50, 2000);
+  },
+};
+
+// 全局 Redis 实例类型声明
+declare global {
+  var redis: Redis | undefined;
+  var isReconnecting: boolean | undefined;
+}
+
+// 连接状态标记
+let isReconnecting = globalThis.isReconnecting ?? false;
+
+// 创建或复用 Redis 实例
+const redisConnectionOptions = parseRedisConnectionOptions(redisUrl);
+const redis =
+  globalThis.redis ??
+  new Redis({
+    ...redisConnectionOptions,
+    ...redisOptions,
+  });
+
+// 在开发环境中保存到 global，避免热重载时创建多个连接
+if (process.env.NODE_ENV !== "production") {
+  globalThis.redis = redis;
+  globalThis.isReconnecting = isReconnecting;
+}
+
+// 添加错误处理，防止无限重连
+redis.on("error", (error) => {
+  console.error("Redis error:", error);
+  isReconnecting = false;
+  globalThis.isReconnecting = false;
+  redis.disconnect();
+});
+
+redis.on("close", () => {
+  console.log("Redis connection closed");
+  isReconnecting = false;
+  globalThis.isReconnecting = false;
+});
+
+redis.on("connect", () => {
+  console.log("Redis connected successfully");
+  isReconnecting = false;
+  globalThis.isReconnecting = false;
+});
+
+redis.on("ready", () => {
+  console.log("Redis is ready");
+  isReconnecting = false;
+  globalThis.isReconnecting = false;
+});
+
+/**
+ * 检查并重连 Redis
+ * 自动处理断开的连接，确保 Redis 可用
+ */
+export async function ensureRedisConnection(): Promise<void> {
+  // 检查Redis连接状态，如果断开则尝试重连
+  if (
+    (redis.status === "close" ||
+      redis.status === "end" ||
+      redis.status === "wait") &&
+    !isReconnecting
+  ) {
+    console.log(`Redis status: ${redis.status}, attempting to reconnect...`);
+    isReconnecting = true;
+    globalThis.isReconnecting = true;
+    await redis.connect();
+  }
+}
+
+/**
+ * 全局 Redis 客户端实例
+ * 使用前建议调用 ensureRedisConnection() 确保连接
+ */
+export default redis;

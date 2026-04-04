@@ -1,0 +1,203 @@
+@import "tailwindcss";
+@import "../styles/content.css";
+@import "katex/dist/katex.min.css";
+
+@theme {
+  --color-background: #ffffff;
+  --color-foreground: #111111;
+
+  --color-primary: #2dd4bf;
+  --color-primary-foreground: #111111;
+
+  --color-secondary: oklch(0.967 0.001 286.375);
+  --color-secondary-foreground: oklch(0.21 0.006 285.885);
+
+  --color-muted: oklch(0.967 0.001 286.375);
+  --color-muted-foreground: oklch(0.552 0.016 285.938);
+
+  --color-accent: oklch(0.967 0.001 286.375);
+  --color-accent-foreground: oklch(0.21 0.006 285.885);
+
+  --color-warning: #eab308;
+  --color-error: #ef4444;
+  --color-success: #22c55e;
+
+  --color-border: oklch(0.92 0.004 286.32);
+  --color-input: oklch(0.92 0.004 286.32);
+
+  --color-ring: #0d9488;
+}
+
+.dark {
+  @theme {
+    --color-background: oklch(0.1776 0 0);
+    --color-foreground: oklch(0.9672 0 0);
+
+    --color-primary: oklch(0.7845 0.1325 181.91);
+    --color-primary-foreground: oklch(0.1776 0 0);
+
+    --color-secondary: oklch(0.274 0.006 286.033);
+    --color-secondary-foreground: oklch(0.835 0.0077 260.73);
+
+    --color-muted: oklch(0.244 0.006 286.033);
+    --color-muted-foreground: oklch(0.705 0.015 286.067);
+
+    --color-accent: oklch(0.274 0.006 286.033);
+    --color-accent-foreground: oklch(0.985 0 0);
+
+    --color-warning: #eab308;
+    --color-error: #ef4444;
+    --color-success: #22c55e;
+
+    --color-border: oklch(100% 0.00011 271.152 / 0.1);
+    --color-input: oklch(1 0 0 / 15%);
+
+    --color-ring: #0d9488;
+  }
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+/* 自定义滚动条样式 */
+::-webkit-scrollbar,
+.scrollbar-default::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+.scrollbar-default::-webkit-scrollbar-track {
+  background: color-mix(
+    in srgb,
+    var(--color-muted-foreground),
+    transparent 60%
+  );
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb,
+.scrollbar-default::-webkit-scrollbar-thumb {
+  background: color-mix(
+    in srgb,
+    var(--color-muted-foreground),
+    transparent 60%
+  );
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover,
+.scrollbar-default::-webkit-scrollbar-thumb:hover {
+  background: var(--color-foreground);
+  opacity: 0.8;
+}
+
+::-webkit-scrollbar-corner,
+.scrollbar-default::-webkit-scrollbar-corner {
+  background: var(--color-background);
+}
+
+/* Firefox 滚动条样式 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--color-muted-foreground),
+      transparent 60%
+    )
+    var(--color-background);
+}
+
+.scrollbar-default {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--color-muted-foreground),
+      transparent 60%
+    )
+    var(--color-background);
+}
+
+/* 允许局部滚动区域使用透明滑轨，避免遮罩/高亮背景下出现白色轨道 */
+.scrollbar-transparent-track {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--color-muted-foreground),
+      transparent 60%
+    )
+    transparent;
+}
+
+.scrollbar-transparent-track::-webkit-scrollbar-track,
+.scrollbar-transparent-track::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 暗色模式下的滚动条优化 */
+.dark ::-webkit-scrollbar-thumb {
+  background: color-mix(
+    in srgb,
+    var(--color-muted-foreground),
+    transparent 60%
+  );
+  opacity: 0.5;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-foreground);
+  opacity: 0.7;
+}
+
+.dark {
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--color-muted-foreground),
+      transparent 60%
+    )
+    var(--color-background);
+}
+
+.loading-dots span {
+  animation: breath-frames 1.5s infinite ease-in-out;
+}
+
+@keyframes breath-frames {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+::selection {
+  @apply bg-primary/30;
+}
+
+:focus-visible:not(input, textarea, select, button, .tiptap) {
+  @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-background;
+}
+
+::marker {
+  @apply text-secondary-foreground/80;
+}
+
+::target-text {
+  @apply bg-primary/50 text-foreground;
+}
+/* 搜索结果高亮样式 */
+mark {
+  color: var(--color-primary);
+  background: none;
+}

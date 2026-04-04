@@ -1,0 +1,189 @@
+import type { BlockFormConfig } from "@/blocks/core/types/field-config";
+
+/**
+ * 项目区块的说明文字（用于 UI 显示）
+ */
+export const PROJECTS_BLOCK_SCHEMA = {
+  marquee: {
+    line1: "Marquee Line 1",
+    line2: "Marquee Line 2",
+    _description: "区块顶部双行跑马灯，可自定义文案",
+  },
+  projects: {
+    sort: "Sort",
+    onlyWithCover: "Only With Cover",
+    showFeatured: "Show Featured First",
+    _description: "控制最近项目的数据查询方式（排序、封面过滤、置顶优先）",
+  },
+  worksDescription: {
+    header: "Header",
+    content: "Content",
+    _description:
+      "项目上的自定义组件，显示在项目中间，可自定义头部和正文（单行）。正文将会居中显示",
+  },
+  worksSummary: {
+    content: "Summary Content",
+    footer: "Footer",
+    _description:
+      "项目上的自定义组件，显示在最后，可自定义正文（多行）和底部链接",
+  },
+} as const;
+
+/**
+ * 项目区块的表单配置
+ */
+export const PROJECTS_BLOCK_FORM_CONFIG: BlockFormConfig = {
+  blockType: "projects",
+  displayName: "最近项目区块",
+  description: "显示最近的三个项目，可自定义排序方式。",
+  author: {
+    name: "RavelloH",
+    url: "https://ravelloh.com",
+  },
+  theme: {
+    name: "neutral",
+    url: "https://neutralpress.net",
+  },
+  fields: [
+    {
+      label: "Marquee 标题（第一行）",
+      path: "title.line1",
+      type: "text",
+      helperText: PROJECTS_BLOCK_SCHEMA.marquee.line1,
+      defaultValue: "PROJECTS",
+    },
+    {
+      label: "Marquee 标题（第二行）",
+      path: "title.line2",
+      type: "text",
+      helperText: PROJECTS_BLOCK_SCHEMA.marquee.line2,
+      defaultValue: "项目",
+    },
+    {
+      label: "项目排序方式",
+      path: "projects.sort",
+      type: "select",
+      options: [
+        { label: "最新发布", value: "publishedAt_desc" },
+        { label: "最早发布", value: "publishedAt_asc" },
+        { label: "最近更新", value: "updatedAt_desc" },
+        { label: "最新创建", value: "createdAt_desc" },
+        { label: "自定义排序", value: "sortOrder_asc" },
+        { label: "Stars 数最多", value: "stars_desc" },
+        { label: "Forks 数最多", value: "forks_desc" },
+      ],
+      defaultValue: "publishedAt_desc",
+    },
+    {
+      label: "仅显示有封面的项目",
+      path: "projects.onlyWithCover",
+      type: "toggle",
+      defaultValue: false,
+    },
+    {
+      label: "显示置顶项目",
+      path: "projects.showFeatured",
+      type: "toggle",
+      defaultValue: true,
+    },
+    {
+      label: "Works Description Header",
+      path: "worksDescription.header.value",
+      type: "text",
+      helperText: PROJECTS_BLOCK_SCHEMA.worksDescription.header,
+      placeholder: "Enter header text",
+    },
+    {
+      label: "Works Description Content",
+      path: "worksDescription.content",
+      type: "text",
+      helperText: PROJECTS_BLOCK_SCHEMA.worksDescription.content,
+      placeholder: "Enter content (will be centered)",
+    },
+    {
+      label: "Works Summary Content",
+      path: "worksSummary.content",
+      type: "array",
+      helperText: "Summary paragraphs",
+      separatorHint: "One paragraph per line",
+    },
+    {
+      label: "Footer Link Text",
+      path: "worksSummary.footer.text",
+      type: "text",
+      helperText: "Link text",
+      placeholder: "e.g., View All Projects",
+    },
+    {
+      label: "Footer Link URL",
+      path: "worksSummary.footer.link",
+      type: "text",
+      helperText: "Link URL",
+      placeholder: "e.g., /projects",
+    },
+  ],
+  groups: [
+    {
+      title: "Marquee",
+      description: PROJECTS_BLOCK_SCHEMA.marquee._description,
+      fields: ["title.line1", "title.line2"],
+    },
+    {
+      title: "Projects Data",
+      description: PROJECTS_BLOCK_SCHEMA.projects._description,
+      fields: [
+        "projects.sort",
+        "projects.onlyWithCover",
+        "projects.showFeatured",
+      ],
+    },
+    {
+      title: "Works Description",
+      description: PROJECTS_BLOCK_SCHEMA.worksDescription._description,
+      fields: ["worksDescription.header.value", "worksDescription.content"],
+    },
+    {
+      title: "Works Summary",
+      description: PROJECTS_BLOCK_SCHEMA.worksSummary._description,
+      fields: [
+        "worksSummary.content",
+        "worksSummary.footer.text",
+        "worksSummary.footer.link",
+      ],
+    },
+  ],
+  actions: {
+    db: 1,
+    config: 0,
+  },
+  previewData: {
+    title: {
+      line1: "PROJECTS",
+      line2: "项目",
+    },
+    projects: {
+      sort: "publishedAt_desc",
+      onlyWithCover: false,
+      showFeatured: true,
+    },
+    worksDescription: {
+      header: {
+        value: "Header",
+        align: "left",
+      },
+      content:
+        "A / B / C / D / E / F / G / H / I / J / K / L / M / N / O / P / Q / R / S / T / U / V / W / X / Y / Z",
+    },
+    worksSummary: {
+      content: [
+        "Summary Content",
+        "这里展示了最新的个人项目和技术实践。",
+        "每个项目都体现了对技术的深入探索和创新思维。",
+      ],
+      footer: {
+        text: "Footer",
+        link: "/projects",
+      },
+    },
+  },
+};

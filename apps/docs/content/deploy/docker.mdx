@@ -1,0 +1,74 @@
+---
+title: Docker 部署
+---
+
+使用 Docker Compose 可以一键拉起 NeutralPress、PostgreSQL 和 Redis。
+
+<Callout title="提示" type="info">
+  你可以通过 [一键部署](/docs/deploy/shell) 的方式来直接快速部署，自动安装
+  Docker / 配置环境变量。
+</Callout>
+
+## 1. 准备配置文件
+
+先创建一个文件夹，用于放置 NeutralPress 的配置文件和 docker-compose 文件：
+
+```bash
+mkdir neutralpress
+cd neutralpress
+```
+
+然后下载配置文件和 docker-compose 文件：
+
+```bash
+curl -fsSL https://get.neutralpress.net/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://get.neutralpress.net/env -o .env
+```
+
+环境变量会自动生成。如果你希望更改环境变量，可以直接更改 .env 文件。
+
+## 2. 拉取镜像并启动
+
+默认镜像地址是 `ghcr.io/ravelloh/neutralpress:latest`。如果你要指定其他镜像，可以先设置 `NEUTRALPRESS_IMAGE`。
+
+```bash
+# 可选：指定镜像
+export NEUTRALPRESS_IMAGE=ghcr.io/ravelloh/neutralpress:latest
+
+# 启动
+docker compose up -d
+```
+
+启动过程：
+
+1. `postgres` 和 `redis` 先启动并通过健康检查
+2. `init` 执行一次运行期初始化（迁移、种子、缓存预热）
+3. `web` 启动
+4. `bootstrap-cache` 调用内部接口刷新 cacheTag
+
+## 3. 访问站点
+
+默认地址：
+
+```txt
+http://localhost:3000
+```
+
+## 4. 查看日志
+
+```bash
+docker compose logs -f init
+docker compose logs -f web
+```
+
+## 5. 停止与清理
+
+```bash
+docker compose down
+```
+
+如需同时删除数据库和 Redis 数据卷：
+
+```bash
+docker compose down -v
+```
