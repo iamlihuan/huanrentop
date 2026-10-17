@@ -27,10 +27,17 @@ function authorized(request: NextRequest): boolean {
 
 type Replacement = [string, string, "exact" | "contains"];
 
+interface FieldSet {
+  blockId: number;
+  path: string;
+  value: unknown;
+}
+
 interface PagePatch {
   slug: string;
   replacements?: Replacement[];
   removeBlockIds?: number[];
+  setFields?: FieldSet[];
   meta?: {
     title?: string;
     metaDescription?: string;
@@ -234,6 +241,26 @@ export async function POST(request: NextRequest): Promise<Response> {
       if (nextConfig && patch.replacements?.length) {
         nextConfig = walk(nextConfig, patch.replacements, stats) as typeof nextConfig;
       }
+      if (nextConfig && patch.setFields?.length) {
+        const cfg = nextConfig as { blocks?: Array<Record<string, unknown>> };
+        for (const field of patch.setFields) {
+          const block = (cfg.blocks ?? []).find(
+            (item) => Number(item?.id) === Number(field.blockId),
+          );
+          if (!block) continue;
+          const segments = field.path.split(".");
+          let cursor: Record<string, unknown> = block;
+          for (const segment of segments.slice(0, -1)) {
+            const next = cursor[segment];
+            if (!next || typeof next !== "object") {
+              cursor[segment] = {};
+            }
+            cursor = cursor[segment] as Record<string, unknown>;
+          }
+          cursor[segments[segments.length - 1]] = field.value as never;
+          stats.changed += 1;
+        }
+      }
 
       pageResults.push({
         slug: patch.slug,
@@ -242,6 +269,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         stringsInspected: stats.inspected,
         stringsChanged: stats.changed,
         removedBlockIds: patch.removeBlockIds ?? [],
+        setFieldCount: patch.setFields?.length ?? 0,
         examples: stats.examples,
         meta: patch.meta ?? null,
       });
@@ -250,7 +278,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         await prisma.page.update({
           where: { id: page.id },
           data: {
-            ...(patch.replacements?.length || patch.removeBlockIds?.length
+            ...(patch.replacements?.length ||
+            patch.removeBlockIds?.length ||
+            patch.setFields?.length
               ? { config: nextConfig as never }
               : {}),
             ...(patch.meta?.title ? { title: patch.meta.title } : {}),
