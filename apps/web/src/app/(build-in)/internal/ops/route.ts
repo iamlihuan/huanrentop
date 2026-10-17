@@ -33,6 +33,7 @@ type Replacement = [string, string, "exact" | "contains"];
 interface PagePatch {
   slug: string;
   replacements?: Replacement[];
+  removeBlockIds?: number[];
   meta?: {
     title?: string;
     metaDescription?: string;
@@ -221,10 +222,21 @@ export async function POST(request: NextRequest): Promise<Response> {
         continue;
       }
       const stats: WalkStats = { inspected: 0, changed: 0, examples: [] };
-      const nextConfig =
-        page.config && patch.replacements?.length
-          ? walk(page.config, patch.replacements, stats)
-          : page.config;
+      let nextConfig = page.config;
+      if (nextConfig && patch.removeBlockIds?.length) {
+        const cfg = nextConfig as Record<string, unknown>;
+        if (Array.isArray(cfg.blocks)) {
+          const before = cfg.blocks.length;
+          cfg.blocks = cfg.blocks.filter((item) => {
+            const id = (item as { id?: unknown })?.id;
+            return !patch.removeBlockIds?.includes(Number(id));
+          });
+          stats.changed += before - cfg.blocks.length;
+        }
+      }
+      if (nextConfig && patch.replacements?.length) {
+        nextConfig = walk(nextConfig, patch.replacements, stats) as typeof nextConfig;
+      }
 
       pageResults.push({
         slug: patch.slug,
@@ -232,6 +244,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         pageId: page.id,
         stringsInspected: stats.inspected,
         stringsChanged: stats.changed,
+        removedBlockIds: patch.removeBlockIds ?? [],
         examples: stats.examples,
         meta: patch.meta ?? null,
       });
@@ -240,7 +253,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         await prisma.page.update({
           where: { id: page.id },
           data: {
-            ...(patch.replacements?.length ? { config: nextConfig as never } : {}),
+            ...(patch.replacements?.length || patch.removeBlockIds?.length
+              ? { config: nextConfig as never }
+              : {}),
             ...(patch.meta?.title ? { title: patch.meta.title } : {}),
             ...(patch.meta?.metaDescription !== undefined
               ? { metaDescription: patch.meta.metaDescription }
