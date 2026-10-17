@@ -4,9 +4,6 @@ import { NextResponse } from "next/server";
 
 import prisma from "@/lib/server/prisma";
 
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
 /**
  * 临时运维端点：一次性内容维护（站点改名 / 文案替换）。
  * 由环境变量 OPS_TOKEN 保护，任务完成后立即删除本文件。
