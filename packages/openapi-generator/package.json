@@ -29,7 +29,7 @@
     "rlog-js": "^1.6.1",
     "typescript": "^5.9.3",
     "yaml": "^2.8.1",
-    "zod": "^4.1.5",
+    "zod": "^4.6.6",
     "zod-openapi": "^5.4.6"
   },
   "devDependencies": {
