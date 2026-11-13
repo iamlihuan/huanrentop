@@ -277,6 +277,32 @@ const nextConfig = () => {
     async headers() {
       return [
         {
+          // 全站安全响应头（SEO / 规范化 / 基础加固）
+          source: "/(.*)",
+          headers: [
+            {
+              key: "X-Content-Type-Options",
+              value: "nosniff",
+            },
+            {
+              key: "X-Frame-Options",
+              value: "SAMEORIGIN",
+            },
+            {
+              key: "Referrer-Policy",
+              value: "strict-origin-when-cross-origin",
+            },
+            {
+              key: "Permissions-Policy",
+              value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+            },
+            {
+              key: "Strict-Transport-Security",
+              value: "max-age=63072000; includeSubDomains",
+            },
+          ],
+        },
+        {
           source: "/favicon.ico",
           headers: [
             {
