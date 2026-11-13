@@ -1,7 +1,7 @@
-# Private reports are preferred when possible.
-Contact: https://github.com/RavelloH/NeutralPress/security/advisories/new
-# Fallback public channel:
-Contact: https://github.com/RavelloH/NeutralPress/issues
-Expires: 2026-12-31T23:59:59.000Z
+# KRYOS-X security contact
+Contact: mailto:huanren.888@outlook.com
+Contact: https://github.com/iamlihuan/huanrentop/issues
+Expires: 2027-12-31T23:59:59.000Z
 Preferred-Languages: zh, en
-Policy: https://github.com/RavelloH/NeutralPress
+Canonical: https://www.kryos-x.top/.well-known/security.txt
+Policy: https://www.kryos-x.top/about
