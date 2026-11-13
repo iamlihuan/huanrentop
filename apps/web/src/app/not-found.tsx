@@ -6,22 +6,24 @@ import MainLayout from "@/components/client/layout/MainLayout";
 import RowGrid, { GridItem } from "@/components/client/layout/RowGrid";
 import ClientDiagnostics from "@/components/ui/ClientDiagnostics";
 import LinkButton from "@/components/ui/LinkButton";
-import { generateMetadata } from "@/lib/server/seo";
+import { generateMetadata as buildMetadata } from "@/lib/server/seo";
 
-export const metadata = await generateMetadata(
-  {
-    title: "404 Not Found",
-    description:
-      "在服务器中未找到此页面。这可能代表此页面已被删除、移动，或从未存在过。",
-    robots: {
-      index: false,
-      follow: false,
+export async function generateMetadata() {
+  return buildMetadata(
+    {
+      title: "404 Not Found",
+      description:
+        "在服务器中未找到此页面。这可能代表此页面已被删除、移动，或从未存在过。",
+      robots: {
+        index: false,
+        follow: false,
+      },
     },
-  },
-  {
-    pathname: "/404",
-  },
-);
+    {
+      pathname: "/404",
+    },
+  );
+}
 
 export default function NotFoundPage() {
   return (
