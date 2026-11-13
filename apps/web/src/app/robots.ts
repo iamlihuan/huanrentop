@@ -20,8 +20,18 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: "/admin",
+      disallow: [
+        "/admin",
+        "/admin/",
+        "/messages",
+        "/settings",
+        "/login",
+        "/register",
+        "/reset-password",
+        "/reauth",
+      ],
     },
     sitemap: `${siteUrl}/sitemap.xml`,
+    host: siteUrl || undefined,
   };
 }
